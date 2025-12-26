@@ -4,6 +4,17 @@ A comprehensive DevOps project demonstrating enterprise-level microservices arch
 
 ---
 
+---
+
+## 🎓 Complete Course Available
+
+**Enroll in the full course**: [DevSecOps Advanced Project - Real-Time Production Application](https://www.udemy.com/course/devsecops-advanced-project-real-time-production-application/?couponCode=CM251226G1)
+
+Learn hands-on implementation of AWS EKS, ArgoCD, Argo Rollouts, HashiCorp Vault, Istio, Datadog, Prometheus, and complete CI/CD automation.
+
+---
+
+
 ## 📋 Table of Contents
 
 - [Overview](https://github.com/prasad-moru/store-app-application?tab=readme-ov-file#-overview)
