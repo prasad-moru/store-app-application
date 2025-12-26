@@ -170,23 +170,6 @@ kubectl label namespace application istio-injection=enabled
 kubectl apply -f infrastructure/argocd/applications/
 ```
 
-### Access UIs
-```bash
-# ArgoCD
-kubectl port-forward svc/argo-cd-argocd-server -n argocd 8080:443
-# https://localhost:8080 (admin / get password from secret)
-
-# Grafana
-kubectl port-forward svc/grafana -n monitoring 3000:80
-# http://localhost:3000
-
-# Prometheus
-kubectl port-forward svc/prometheus-server -n monitoring 9090:80
-# http://localhost:9090
-```
-
----
-
 ## 📁 Project Structure
 
 ```
