@@ -6,7 +6,7 @@ A comprehensive DevOps project demonstrating enterprise-level microservices arch
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
+- [Overview](https://github.com/prasad-moru/store-app-application?tab=readme-ov-file#-overview)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
 - [Microservices](#microservices)
