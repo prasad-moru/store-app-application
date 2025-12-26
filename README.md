@@ -4,8 +4,6 @@ A comprehensive DevOps project demonstrating enterprise-level microservices arch
 
 ---
 
----
-
 ## 🎓 Complete Course Available
 
 **Enroll in the full course**: [DevSecOps Advanced Project - Real-Time Production Application](https://www.udemy.com/course/devsecops-advanced-project-real-time-production-application/?couponCode=CM251226G1)
