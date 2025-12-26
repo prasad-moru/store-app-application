@@ -1,0 +1,13 @@
+apiVersion: v2
+name: virtual-worker
+description: Virtual Customer Load Simulator
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - simulator
+  - load-generator
+  - rust
+maintainers:
+  - name: Your Name
+    email: your.email@example.com

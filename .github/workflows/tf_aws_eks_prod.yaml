@@ -1,0 +1,456 @@
+name: Store-App-EKS_Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        type: choice
+        default: 'plan'
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VERSION: '1.10.3'
+  AWS_REGION: 'us-east-1'
+  TF_WORKING_DIR: 'aws_eks_infrastructure/Env/Dev'
+
+jobs:
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: https://vault.devopswala.com
+          method: jwt
+          role: github-actions
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY ;
+            secret/data/terraform/backend bucket | TF_STATE_BUCKET
+
+      - name: Verify AWS Credentials Are Set
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "ERROR: AWS_ACCESS_KEY_ID is not set"
+            exit 1
+          fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "ERROR: AWS_SECRET_ACCESS_KEY is not set"
+            exit 1
+          fi
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "ERROR: TF_STATE_BUCKET is not set"
+            exit 1
+          fi
+          echo "✅ All required credentials are set"
+          echo "Access Key ID starts with: ${AWS_ACCESS_KEY_ID:0:4}..."
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init (Validation Only)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init -backend=true
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          soft_fail: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [terraform-validate, security-scan]
+    outputs:
+      plan-exitcode: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: https://vault.devopswala.com
+          method: jwt
+          role: github-actions
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY ;
+            secret/data/terraform/backend bucket | TF_STATE_BUCKET
+
+      - name: Verify AWS Credentials Are Set
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "ERROR: AWS_ACCESS_KEY_ID is not set"
+            exit 1
+          fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "ERROR: AWS_SECRET_ACCESS_KEY is not set"
+            exit 1
+          fi
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "ERROR: TF_STATE_BUCKET is not set"
+            exit 1
+          fi
+          echo "✅ All required credentials are set"
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_VAR_aws_access_key: ${{ env.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform plan \
+            -var="region=${{ env.AWS_REGION }}" \
+            -out=tfplan \
+            -no-color | tee plan.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-development-${{ github.run_number }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/plan.txt
+          retention-days: 7
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: github.event.inputs.action == 'apply'
+    environment: 
+      name: store-app
+      url: https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: https://vault.devopswala.com
+          method: jwt
+          role: github-actions
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY ;
+            secret/data/terraform/backend bucket | TF_STATE_BUCKET
+
+      - name: Verify AWS Credentials Are Set
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "ERROR: AWS_ACCESS_KEY_ID is not set"
+            exit 1
+          fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "ERROR: AWS_SECRET_ACCESS_KEY is not set"
+            exit 1
+          fi
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "ERROR: TF_STATE_BUCKET is not set"
+            exit 1
+          fi
+          echo "✅ All required credentials are set"
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-development-${{ github.run_number }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_VAR_aws_access_key: ${{ env.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        id: outputs
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: true
+        run: |
+          echo "📊 Retrieving Terraform outputs..."
+          
+          # Get cluster name
+          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
+          if [ -z "$CLUSTER_NAME" ]; then
+            echo "cluster_name=Not-Available" >> $GITHUB_OUTPUT
+            echo "⚠️  Cluster name not available"
+          else
+            echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+            echo "✅ Cluster name: ${CLUSTER_NAME}"
+          fi
+          
+          # Get cluster endpoint
+          CLUSTER_ENDPOINT=$(terraform output -raw cluster_endpoint 2>/dev/null || echo "")
+          if [ -z "$CLUSTER_ENDPOINT" ]; then
+            echo "cluster_endpoint=Not-Available" >> $GITHUB_OUTPUT
+            echo "⚠️  Cluster endpoint not available"
+          else
+            echo "cluster_endpoint=${CLUSTER_ENDPOINT}" >> $GITHUB_OUTPUT
+            echo "✅ Cluster endpoint retrieved"
+          fi
+          
+          # Get VPC ID
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+          if [ -z "$VPC_ID" ]; then
+            echo "vpc_id=Not-Available" >> $GITHUB_OUTPUT
+            echo "⚠️  VPC ID not available"
+          else
+            echo "vpc_id=${VPC_ID}" >> $GITHUB_OUTPUT
+            echo "✅ VPC ID: ${VPC_ID}"
+          fi
+          
+          # Get ECR repository URL
+          ECR_REPO=$(terraform output -raw ecr_repository_url 2>/dev/null || echo "")
+          if [ -z "$ECR_REPO" ]; then
+            echo "ecr_repository_url=Not-Available" >> $GITHUB_OUTPUT
+            echo "⚠️  ECR repository URL not available"
+          else
+            echo "ecr_repository_url=${ECR_REPO}" >> $GITHUB_OUTPUT
+            echo "✅ ECR repository: ${ECR_REPO}"
+          fi
+          
+          echo ""
+          echo "✅ Terraform outputs processing completed"
+
+      - name: Create Deployment Summary
+        if: always()
+        run: |
+          # Determine deployment status
+          if [ "${{ job.status }}" == "success" ]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="Infrastructure deployed successfully"
+          else
+            STATUS_EMOJI="⚠️"
+            STATUS_TEXT="Deployment completed with warnings"
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🚀 Deployment Summary - Development Environment
+          
+          ### Infrastructure Details
+          | Property | Value |
+          |----------|-------|
+          | **Environment** | `development` |
+          | **Cluster Name** | `${{ steps.outputs.outputs.cluster_name }}` |
+          | **Cluster Endpoint** | `${{ steps.outputs.outputs.cluster_endpoint }}` |
+          | **VPC ID** | `${{ steps.outputs.outputs.vpc_id }}` |
+          | **ECR Repository** | `${{ steps.outputs.outputs.ecr_repository_url }}` |
+          | **Region** | `${{ env.AWS_REGION }}` |
+          | **Terraform Version** | `${{ env.TF_VERSION }}` |
+          | **Deployed By** | @${{ github.actor }} |
+          | **Commit** | `${{ github.sha }}` |
+          | **Workflow Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+          
+          ### 🔐 Security & Configuration
+          - **Secrets Management**: HashiCorp Vault
+          - **State Backend**: S3 with native locking (`use_lockfile`)
+          - **Runner Type**: GitHub-hosted (`ubuntu-latest`)
+          - **State Bucket**: `${{ env.TF_STATE_BUCKET }}`
+          
+          ### 🔗 AWS Console Quick Links
+          EOF
+          
+          # Add conditional links based on output availability
+          if [ "${{ steps.outputs.outputs.cluster_name }}" != "Not-Available" ]; then
+            echo "- [🎯 EKS Cluster Console](https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/${{ steps.outputs.outputs.cluster_name }})" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ steps.outputs.outputs.vpc_id }}" != "Not-Available" ]; then
+            echo "- [🌐 VPC Console](https://console.aws.amazon.com/vpc/home?region=${{ env.AWS_REGION }}#vpcs:VpcId=${{ steps.outputs.outputs.vpc_id }})" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "- [📦 ECR Console](https://console.aws.amazon.com/ecr/repositories?region=${{ env.AWS_REGION }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [🗂️ S3 State Bucket](https://s3.console.aws.amazon.com/s3/buckets/${{ env.TF_STATE_BUCKET }}?region=${{ env.AWS_REGION }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [☁️ AWS Console Home](https://console.aws.amazon.com/?region=${{ env.AWS_REGION }})" >> $GITHUB_STEP_SUMMARY
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ### 📊 Deployment Status
+          EOF
+          
+          echo "${STATUS_EMOJI} **${STATUS_TEXT}** using Vault-managed secrets" >> $GITHUB_STEP_SUMMARY
+          
+          # Add timestamp
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Deployed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+
+  terraform-destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    if: github.event.inputs.action == 'destroy'
+    environment: 
+      name: store-app-destroy
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: https://vault.devopswala.com
+          method: jwt
+          role: github-actions
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY ;
+            secret/data/terraform/backend bucket | TF_STATE_BUCKET
+
+      - name: Verify AWS Credentials Are Set
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "ERROR: AWS_ACCESS_KEY_ID is not set"
+            exit 1
+          fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "ERROR: AWS_SECRET_ACCESS_KEY is not set"
+            exit 1
+          fi
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "ERROR: TF_STATE_BUCKET is not set"
+            exit 1
+          fi
+          echo "✅ All required credentials are set"
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Destroy
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_VAR_aws_access_key: ${{ env.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform destroy -auto-approve \
+            -var="region=${{ env.AWS_REGION }}"
+
+      - name: Destroy Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🗑️ Infrastructure Destroyed - Development Environment
+          
+          - **Environment**: `development`
+          - **Region**: `${{ env.AWS_REGION }}`
+          - **Destroyed By**: @${{ github.actor }}
+          - **Timestamp**: $(date)
+          - **Secrets Source**: HashiCorp Vault
+          
+          ⚠️ All resources in this environment have been destroyed.
+          EOF
+
+  notify-success:
+    name: Deployment Success Notification
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: success()
+    steps:
+      - name: Success Notification
+        run: |
+          echo "✅ Deployment to development environment completed successfully!"
+          echo "✅ Secrets managed securely via HashiCorp Vault"
+
+  notify-failure:
+    name: Deployment Failure Notification
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: failure()
+    steps:
+      - name: Failure Notification
+        run: |
+          echo "❌ Deployment to development environment failed!"
+          echo "Check the workflow logs for details."

@@ -1,0 +1,72 @@
+---
+# ===================================================================
+# FILE: helm-charts/mongodb/values.yaml
+# ===================================================================
+replicaCount: 1
+
+image:
+  repository: prasad890/mongo
+  tag: "6.0.6"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: "mongodb"
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "mongodb"
+
+service:
+  name: mongodb
+  type: ClusterIP
+  port: 27017
+  targetPort: 27017
+
+# Persistence configuration
+persistence:
+  enabled: true
+  storageClass: "gp2"  # AWS EBS gp2
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+# Resource limits - matching your standalone manifest
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1024Mi
+
+# Health probes - matching your standalone manifest
+probes:
+  startup:
+    exec:
+      command:
+        - bash
+        - -c
+        - "mongosh --quiet --eval \"db.runCommand('ping').ok\" || exit 1"
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 15
+    failureThreshold: 12
+  liveness:
+    exec:
+      command:
+        - bash
+        - -c
+        - "mongosh --quiet --eval \"db.runCommand('ping').ok\" || exit 1"
+    periodSeconds: 30
+    timeoutSeconds: 15
+    failureThreshold: 3
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

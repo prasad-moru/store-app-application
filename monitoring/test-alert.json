@@ -1,0 +1,16 @@
+[
+  {
+    "labels": {
+      "alertname": "TestAlert",
+      "severity": "warning",
+      "instance": "test-instance",
+      "job": "test-job"
+    },
+    "annotations": {
+      "summary": "This is a test alert from Alertmanager",
+      "description": "Testing Slack integration"
+    },
+    "startsAt": "2025-10-31T03:06:40.000Z",
+    "endsAt": "2025-10-31T03:11:40.000Z"
+  }
+]

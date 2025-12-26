@@ -1,0 +1,13 @@
+---
+# ===================================================================
+# FILE: helm-charts/rabbitmq/templates/configmap.yaml
+# ===================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rabbitmq.fullname" . }}-enabled-plugins
+  labels:
+    {{- include "rabbitmq.labels" . | nindent 4 }}
+data:
+  enabled_plugins: |
+    [{{- range $i, $plugin := .Values.plugins.enabled }}{{- if $i }},{{- end }}{{ $plugin }}{{- end }}].

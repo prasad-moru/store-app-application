@@ -1,0 +1,70 @@
+
+
+
+
+
+
+
+
+vault write auth/jwt/role/github-actions \
+  role_type="jwt" \
+  bound_audiences="https://github.com/prasad-moru" \
+  bound_claims='{"repository":"prasad-moru/GenAiStoreApp"}' \
+  user_claim="repository" \
+  policies="github-actions" \
+  ttl=9h
+
+
+
+  # Put your AWS credentials into Vault
+vault kv put secret/aws/credentials \
+  access_key="YOUR_AWS_KEY" \
+  secret_key="YOUR_AWS_SECRET"
+
+
+
+  # 1. Enable JWT auth
+vault auth enable jwt
+
+# 2. Configure GitHub OIDC
+vault write auth/jwt/config \
+  bound_issuer="https://token.actions.githubusercontent.com" \
+  oidc_discovery_url="https://token.actions.githubusercontent.com"
+
+# 3. Create role (REPLACE WITH YOUR ORG/REPO!)
+vault write auth/jwt/role/github-actions \
+  role_type="jwt" \
+  bound_audiences="https://github.com/<YOUR-ORG>" \
+  bound_claims='{"sub":"repo:<YOUR-ORG>/<YOUR-REPO>:*"}' \
+  user_claim="actor" \
+  policies="github-actions" \
+  ttl="1h"
+
+# 4. Store your secrets
+vault kv put secret/aws/credentials \
+  access_key="YOUR_AWS_KEY" \
+  secret_key="YOUR_AWS_SECRET"
+
+vault kv put secret/terraform/backend \
+  bucket="store-app-project"
+
+
+
+
+  ubuntu@ip-172-31-23-230:~$ export VAULT_ADDR='http://127.0.0.1:8200'
+ubuntu@ip-172-31-23-230:~$ vault login
+
+
+
+vault write auth/jwt/role/github-actions \
+  role_type="jwt" \
+  bound_audiences="https://github.com/prasad-moru" \
+  user_claim="actor" \
+  bound_claims_type="glob" \
+  bound_claims='{"sub":"repo:prasad-moru/GenAiStoreApp:*"}' \
+  policies="github-actions" \
+  ttl="9h"
+
+
+
+  vault write auth/jwt/role/github-actions @github-role.json

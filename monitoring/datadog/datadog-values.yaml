@@ -1,0 +1,131 @@
+# datadog-values.yaml
+# Production configuration for AI Service monitoring
+
+datadog:
+  # Use existing secret for API keys
+  apiKeyExistingSecret: datadog-secret
+  appKeyExistingSecret: datadog-secret
+  
+  # Datadog site (US)
+  site: us5.datadoghq.com
+  
+  # Cluster name (will appear in Datadog UI)
+  clusterName: ai-store-cluster
+  
+  # Logs collection
+  logs:
+    enabled: true
+    containerCollectAll: true
+    containerCollectUsingFiles: true
+  
+  # APM (Application Performance Monitoring)
+  apm:
+    portEnabled: true
+    socketEnabled: true
+    hostPort: 8126
+  
+  # Process monitoring
+  processAgent:
+    enabled: true
+    processCollection: true
+  
+  # Network monitoring (optional, uses more resources)
+  networkMonitoring:
+    enabled: false  # Set to true if you need network metrics
+  
+  # Orchestrator Explorer (K8s resource metadata)
+  orchestratorExplorer:
+    enabled: true
+  
+  # Kubernetes events collection
+  collectEvents: true
+  leaderElection: true
+  
+  # Global tags (appear on all metrics)
+  tags:
+    - env:production
+    - cluster:ai-store
+    - project:store-app
+    - team:platform
+
+# Cluster Agent configuration
+clusterAgent:
+  enabled: true
+  replicas: 2
+  
+  # Admission Controller (for auto-instrumentation)
+  admissionController:
+    enabled: true
+    mutateUnlabelled: false  # Only inject into pods with annotation
+    
+  # Metrics Provider (for custom metrics in HPA)
+  metricsProvider:
+    enabled: true
+    useDatadogMetrics: true
+  
+  # Resources for Cluster Agent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Node Agent (DaemonSet) configuration
+agents:
+  enabled: true
+  
+  # Resource limits per agent pod
+  containers:
+    agent:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    
+    processAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    
+    traceAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+  
+  # Deploy on all nodes
+  tolerations:
+    - operator: Exists
+  
+  # Use host network for better network monitoring
+  useHostNetwork: true
+
+# Service Account
+serviceAccount:
+  create: true
+  name: datadog-agent
+
+# Cluster Checks Runner (for cluster-level checks)
+clusterChecksRunner:
+  enabled: true
+  replicas: 2
+  
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

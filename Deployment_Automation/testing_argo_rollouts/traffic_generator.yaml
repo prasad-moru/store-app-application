@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-generator
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-generator
+  template:
+    metadata:
+      labels:
+        app: traffic-generator
+    spec:
+      containers:
+      - name: traffic-gen
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          echo "Starting traffic generation..."
+          while true; do
+            for i in $(seq 1 50); do
+              wget -q -O- http://nginx-test.default.svc.cluster.local/ >/dev/null 2>&1 && echo "Request $i successful" || echo "Request $i failed"
+              sleep 0.2
+            done
+            echo "Batch complete, sleeping 5s..."
+            sleep 5
+          done

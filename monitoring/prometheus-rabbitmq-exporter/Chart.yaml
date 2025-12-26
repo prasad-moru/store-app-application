@@ -1,0 +1,21 @@
+apiVersion: v1
+appVersion: 1.0.0
+description: Rabbitmq metrics exporter for prometheus
+home: https://github.com/kbudde/rabbitmq_exporter
+maintainers:
+- email: cedric@desaintmartin.fr
+  name: desaintmartin
+  url: https://github.com/desaintmartin
+- email: abhishekbhardwaj510@gmail.com
+  name: iamabhishek-dubey
+  url: https://github.com/iamabhishek-dubey
+- email: juan.chimienti@gmail.com
+  name: juanchimienti
+  url: https://github.com/juanchimienti
+- email: monotek23@gmail.com
+  name: monotek
+  url: https://github.com/monotek
+name: prometheus-rabbitmq-exporter
+sources:
+- https://github.com/kbudde/rabbitmq_exporter
+version: 2.1.1

@@ -1,0 +1,19 @@
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "store-front.fullname" . }}-preview
+  # ⚠️ ADD THIS LINE:
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "store-front.labels" . | nindent 4 }}
+    service-type: preview
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "store-front.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx-test
+  namespace: argocd
+  annotations:
+    # Image Updater annotations
+    argocd-image-updater.argoproj.io/image-list: nginx=614520203046.dkr.ecr.us-east-1.amazonaws.com/test-app
+    argocd-image-updater.argoproj.io/nginx.update-strategy: semver
+    argocd-image-updater.argoproj.io/nginx.allow-tags: regexp:^[0-9]+\.[0-9]+\.[0-9]+$
+    argocd-image-updater.argoproj.io/nginx.helm.image-name: image.name
+    argocd-image-updater.argoproj.io/nginx.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+    argocd-image-updater.argoproj.io/nginx.force-update: "true"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/prasad-moru/GenAiStoreApp.git  # Update with your Git URL
+    targetRevision: main
+    path: Deployment_Automation/testing_argo_rollouts/nginx-test-chart
+    helm:
+      valueFiles:
+      - values.yaml
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false  # Important: Let Rollouts manage its state
+    syncOptions:
+    - CreateNamespace=true

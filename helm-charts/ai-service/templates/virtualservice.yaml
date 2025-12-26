@@ -1,0 +1,20 @@
+{{- if and .Values.istio.enabled .Values.istio.virtualService.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "ai-service.fullname" . }}
+  labels:
+    {{- include "ai-service.labels" . | nindent 4 }}
+spec:
+  hosts:
+    {{- toYaml .Values.istio.virtualService.hosts | nindent 4 }}
+  http:
+  - name: primary
+    route:
+    - destination:
+        host: {{ include "ai-service.fullname" . }}
+      weight: 100
+    - destination:
+        host: {{ include "ai-service.fullname" . }}-canary
+      weight: 0
+{{- end }}

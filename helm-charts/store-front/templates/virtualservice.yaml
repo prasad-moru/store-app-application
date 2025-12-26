@@ -1,0 +1,38 @@
+{{- if and .Values.istio.enabled .Values.istio.virtualService.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "store-front.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "store-front.labels" . | nindent 4 }}
+spec:
+  hosts:
+    {{- range .Values.istio.virtualService.hosts }}
+    - {{ . }}
+    {{- end }}
+  http:
+  {{- if .Values.istio.virtualService.previewHeaderRouting }}
+  {{- if .Values.istio.virtualService.previewHeaderRouting.enabled }}
+  # Route preview traffic to preview service
+  - match:
+    - headers:
+        {{ .Values.istio.virtualService.previewHeaderRouting.headerName }}:
+          exact: {{ .Values.istio.virtualService.previewHeaderRouting.headerValue | quote }}
+    route:
+    - destination:
+        host: {{ include "store-front.fullname" . }}-preview
+        port:
+          number: {{ .Values.service.port }}
+      weight: 100
+  {{- end }}
+  {{- end }}
+  # Default route to active service
+  - name: primary
+    route:
+    - destination:
+        host: {{ include "store-front.fullname" . }}
+        port:
+          number: {{ .Values.service.port }}
+      weight: 100
+{{- end }}

@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+spec:
+  serviceName: mongodb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+      - name: mongodb
+        image: prasad890/mongo:6.0.6
+        ports:
+        - containerPort: 27017
+          name: mongodb
+        resources:
+          requests:
+            cpu: 200m             # Increased further
+            memory: 512Mi
+          limits:
+            cpu: 500m             # Increased further
+            memory: 1024Mi
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
+        # Simplify command and increase timeoutSeconds
+        startupProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - "mongosh --quiet --eval \"db.runCommand('ping').ok\" || exit 1"
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 15      # Increased from 5
+          failureThreshold: 12    # 3 minutes total
+        # Only add liveness probe after startup probe succeeds
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - "mongosh --quiet --eval \"db.runCommand('ping').ok\" || exit 1"
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: gp2   
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+spec:
+  ports:
+  - port: 27017
+    targetPort: 27017
+  selector:
+    app: mongodb
+  type: ClusterIP

@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: alertmanager-alb-http
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing          # or "internal" for private ALB
+    alb.ingress.kubernetes.io/target-type: ip                  # use pod IPs (recommended)
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300
+    alb.ingress.kubernetes.io/healthcheck-path: /-/ready       # Alertmanager readiness path
+    alb.ingress.kubernetes.io/healthcheck-port: "9093"
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    # optional: restrict source IPs (e.g., your office or VPN)
+    # alb.ingress.kubernetes.io/inbound-cidrs: "1.2.3.4/32,5.6.7.0/24"
+    # optional: tag resources created by ALB controller
+    alb.ingress.kubernetes.io/tags: "Environment=dev,Owner=monitoring"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: alertmanager.devopswala.com  # <-- Replace with your domain or omit for ALB DNS name
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: alertmanager
+                port:
+                  number: 9093

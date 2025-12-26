@@ -1,0 +1,18 @@
+🤖 Virtual Customer Simulator has been deployed!
+
+Chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+📊 Deployment Information:
+- Image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+- Replicas: {{ .Values.replicaCount }}
+- Orders Per Hour: {{ (index .Values.env 1).value }}
+
+🔍 Get the deployment status:
+  kubectl get deployment {{ include "virtual-customer.fullname" . }} -n {{ .Release.Namespace }}
+
+📋 View logs:
+  kubectl logs -l app={{ include "virtual-customer.name" . }} -n {{ .Release.Namespace }} --tail=50 -f
+
+This is a load simulator that generates orders automatically.

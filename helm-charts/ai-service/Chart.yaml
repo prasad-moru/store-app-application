@@ -1,0 +1,15 @@
+# helm-charts/ai-service/Chart.yaml
+apiVersion: v2
+name: ai-service
+description: AI Service with Canary Deployment Strategy
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - ai
+  - openai
+  - python
+  - microservice
+maintainers:
+  - name: Bhavaniprasad 
+    email: prasadmoru@gmail.com

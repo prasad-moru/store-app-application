@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-service
+  namespace: backend
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vault-test
+  namespace: backend
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "ai-service"
+    # Use vault-active service (points to active Vault pod)
+    vault.hashicorp.com/agent-inject-vault-address: "http://vault-active.platform.svc.cluster.local:8200"
+    vault.hashicorp.com/log-level: "info"
+    vault.hashicorp.com/agent-inject-secret-secrets.env: "kv/data/ai-service"
+    vault.hashicorp.com/agent-inject-template-secrets.env: |
+      #!/bin/sh
+      {{- with secret "kv/data/ai-service" -}}
+      export OPENAI_API_KEY="{{ .Data.data.openai_api_key }}"
+      export OPENAI_ORG_ID="{{ .Data.data.openai_org_id }}"
+      export AZURE_OPENAI_API_KEY="{{ .Data.data.azure_openai_api_key }}"
+      {{- end -}}
+spec:
+  serviceAccountName: ai-service
+  containers:
+  - name: app
+    image: nginx:alpine
+    command:
+      - sh
+      - -c
+      - |
+        echo "=== Vault Secret Injection Test ==="
+        echo ""
+        echo "Checking secrets file..."
+        ls -la /vault/secrets/
+        echo ""
+        echo "Reading secrets..."
+        cat /vault/secrets/secrets.env
+        echo ""
+        echo "Testing environment variables..."
+        source /vault/secrets/secrets.env
+        env | grep -E 'OPENAI|AZURE'
+        echo ""
+        echo "✅ SUCCESS!"
+        sleep 3600
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 50m
+        memory: 64Mi

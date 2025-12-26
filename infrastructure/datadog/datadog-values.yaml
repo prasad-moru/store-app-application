@@ -1,0 +1,111 @@
+# infrastructure/datadog/datadog-values.yaml
+datadog:
+  # Site (US1, EU1, etc.)
+  site: datadoghq.com  # Change if you're in EU: datadoghq.eu
+  
+  # Logs collection
+  logs:
+    enabled: true
+    containerCollectAll: true
+  
+  # APM (Application Performance Monitoring)
+  apm:
+    portEnabled: true
+    socketEnabled: true
+  
+  # Process monitoring
+  processAgent:
+    enabled: true
+    processCollection: true
+  
+  # Network monitoring
+  networkMonitoring:
+    enabled: true
+  
+  # Orchestrator Explorer
+  orchestratorExplorer:
+    enabled: true
+  
+  # Tags
+  tags:
+    - env:production
+    - cluster:eks-store-app
+  
+  # Kubernetes events
+  collectEvents: true
+  leaderElection: true
+
+# Cluster Agent
+clusterAgent:
+  enabled: true
+  replicas: 2
+  
+  # Admission Controller for auto-instrumentation
+  admissionController:
+    enabled: true
+    mutateUnlabelled: false  # Only inject into annotated pods
+  
+  # Metrics Provider for HPA custom metrics
+  metricsProvider:
+    enabled: true
+
+# Agent DaemonSet configuration
+agents:
+  # Use Vault for API keys
+  useConfigMap: false
+  
+  # Resource limits
+  containers:
+    agent:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    processAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    traceAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+  
+  # Tolerations for all nodes
+  tolerations:
+    - operator: Exists
+  
+  # Pod annotations for Vault injection
+  podAnnotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "datadog"
+    vault.hashicorp.com/agent-inject-secret-datadog.env: "kv/data/datadog"
+    vault.hashicorp.com/agent-inject-template-datadog.env: |
+      {{- with secret "kv/data/datadog" -}}
+      export DD_API_KEY="{{ .Data.data.api_key }}"
+      export DD_APP_KEY="{{ .Data.data.app_key }}"
+      {{- end -}}
+  
+  # Custom environment from Vault
+  customAgentConfig:
+    command:
+      - /bin/sh
+      - -c
+      - |
+        source /vault/secrets/datadog.env
+        exec /entrypoint.sh
+
+# Service Account
+serviceAccount:
+  create: true
+  name: datadog-agent

@@ -1,0 +1,259 @@
+name: AWS EKS Infrastructure Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        type: choice
+        default: 'plan'
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  TF_VERSION: '1.5.7'
+  AWS_REGION: 'us-east-1'
+  # Relative path from repository root to your terraform files
+  TF_WORKING_DIR: 'aws_eks_infrastructure/Env/Dev'
+
+jobs:
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: self-hosted
+    environment: store-app  # This references your GitHub environment where secrets are stored
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init (Validation Only)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+  security-scan:
+    name: Security Scan
+    runs-on: self-hosted
+    needs: terraform-validate
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          soft_fail: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: self-hosted
+    needs: [terraform-validate, security-scan]
+    environment: store-app  # This references your GitHub environment where secrets are stored
+    outputs:
+      plan-exitcode: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_VAR_aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform plan \
+            -var="region=${{ env.AWS_REGION }}" \
+            -out=tfplan \
+            -no-color | tee plan.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-development-${{ github.run_number }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/plan.txt
+          retention-days: 7
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: self-hosted
+    needs: terraform-plan
+    if: github.event.inputs.action == 'apply'
+    environment: 
+      name: store-app  # This references your GitHub environment where secrets are stored
+      url: https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-development-${{ github.run_number }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_VAR_aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        id: outputs
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          echo "cluster_name=$(terraform output -raw cluster_name 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+          echo "cluster_endpoint=$(terraform output -raw cluster_endpoint 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+          echo "vpc_id=$(terraform output -raw vpc_id 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+
+      - name: Create Deployment Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🚀 Deployment Summary - Development Environment
+          
+          ### Infrastructure Details
+          - **Environment**: `development`
+          - **Cluster Name**: `${{ steps.outputs.outputs.cluster_name }}`
+          - **Cluster Endpoint**: `${{ steps.outputs.outputs.cluster_endpoint }}`
+          - **VPC ID**: `${{ steps.outputs.outputs.vpc_id }}`
+          - **ECR Repository**: `${{ steps.outputs.outputs.ecr_repository_url }}`
+          - **Region**: `${{ env.AWS_REGION }}`
+          - **Deployed By**: @${{ github.actor }}
+          - **Commit**: `${{ github.sha }}`
+          
+          ### AWS Console Links
+          - [EKS Cluster Console](https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/${{ steps.outputs.outputs.cluster_name }})
+          - [VPC Console](https://console.aws.amazon.com/vpc/home?region=${{ env.AWS_REGION }}#vpcs:VpcId=${{ steps.outputs.outputs.vpc_id }})
+          - [ECR Console](https://console.aws.amazon.com/ecr/repositories?region=${{ env.AWS_REGION }})
+          
+          ### Deployment Status
+          ✅ Infrastructure deployed successfully
+          EOF
+
+  terraform-destroy:
+    name: Terraform Destroy
+    runs-on: self-hosted
+    needs: terraform-validate
+    if: github.event.inputs.action == 'destroy'
+    environment: 
+      name: store-app-destroy  # Separate environment for destroy (you can add approval protection)
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Destroy
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_VAR_aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform destroy -auto-approve \
+            -var="region=${{ env.AWS_REGION }}"
+
+      - name: Destroy Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🗑️ Infrastructure Destroyed - Development Environment
+          
+          - **Environment**: `development`
+          - **Region**: `${{ env.AWS_REGION }}`
+          - **Destroyed By**: @${{ github.actor }}
+          - **Timestamp**: $(date)
+          
+          ⚠️ All resources in this environment have been destroyed.
+          EOF
+
+  notify-success:
+    name: Deployment Success Notification
+    runs-on: self-hosted
+    needs: terraform-apply
+    if: success()
+    steps:
+      - name: Success Notification
+        run: |
+          echo "✅ Deployment to development environment completed successfully!"
+
+  notify-failure:
+    name: Deployment Failure Notification
+    runs-on: self-hosted
+    needs: terraform-apply
+    if: failure()
+    steps:
+      - name: Failure Notification
+        run: |
+          echo "❌ Deployment to development environment failed!"
+          echo "Check the workflow logs for details."

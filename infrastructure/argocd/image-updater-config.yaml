@@ -1,0 +1,42 @@
+# infrastructure/argocd/image-updater-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-config
+  namespace: argocd
+data:
+  registries.conf: |
+    registries:
+    - name: ECR
+      api_url: https://<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com
+      prefix: <AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com
+      credentials: ext:/scripts/ecr-login.sh
+      default: true
+  
+  log.level: debug
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-ssh-config
+  namespace: argocd
+data:
+  config: |
+    Host github.com
+      HostName github.com
+      User git
+      IdentityFile ~/.ssh/id_rsa
+      StrictHostKeyChecking no
+
+---
+# ECR login script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-ecr-script
+  namespace: argocd
+data:
+  ecr-login.sh: |
+    #!/bin/sh
+    aws ecr get-login-password --region <AWS_REGION> | base64

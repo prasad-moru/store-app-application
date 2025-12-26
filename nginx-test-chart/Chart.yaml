@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nginx-test
+description: A simple nginx Helm chart for testing ArgoCD Image Updater
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

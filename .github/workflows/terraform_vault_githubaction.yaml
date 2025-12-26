@@ -1,0 +1,97 @@
+name: Terraform EC2 Deployment
+
+on:
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: https://vault.devopswala.com
+          method: jwt
+          role: github-actions
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY
+
+      - name: Verify AWS Credentials Are Set
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "ERROR: AWS_ACCESS_KEY_ID is not set"
+            exit 1
+          fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "ERROR: AWS_SECRET_ACCESS_KEY is not set"
+            exit 1
+          fi
+          echo "✅ AWS credentials are set"
+          echo "Access Key ID starts with: ${AWS_ACCESS_KEY_ID:0:4}..."
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ./tf_vault_testing
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+        working-directory: ./tf_vault_testing
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+        working-directory: ./tf_vault_testing
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -no-color -out=tfplan
+          echo "Plan exit code: $?"
+        working-directory: ./tf_vault_testing
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+
+      - name: Check if Plan File Exists
+        run: |
+          if [ -f tfplan ]; then
+            echo "✅ tfplan file exists"
+            ls -lh tfplan
+          else
+            echo "❌ tfplan file does NOT exist"
+            exit 1
+          fi
+        working-directory: ./tf_vault_testing
+
+      - name: Terraform Apply
+        run: terraform destroy -auto-approve
+        working-directory: ./tf_vault_testing
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+
+      - name: Terraform Output
+        if: success()
+        run: terraform output -json
+        working-directory: ./tf_vault_testing

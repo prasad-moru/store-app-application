@@ -1,0 +1,60 @@
+# infrastructure/argocd/applications/product-service-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: product-service
+  namespace: argocd
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: product=591234613960.dkr.ecr.us-east-1.amazonaws.com/product-service
+    argocd-image-updater.argoproj.io/product.update-strategy: semver
+    argocd-image-updater.argoproj.io/product.allow-tags: regexp:^[0-9]+\.[0-9]+\.[0-9]+-.+$
+    argocd-image-updater.argoproj.io/product.ignore-tags: latest, dev, staging
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+    
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: argocd-notifications
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: argocd-notifications
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: product-service
+    app.kubernetes.io/part-of: store-app
+    deployment-strategy: canary
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/prasad-moru/GenAiStoreApp.git
+    targetRevision: main
+    path: helm-charts/product-service
+    helm:
+      releaseName: product-service
+      valueFiles:
+        - values.yaml
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: application
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers:
+        - /spec/replicas
+  
+  revisionHistoryLimit: 10

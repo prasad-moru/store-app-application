@@ -1,0 +1,59 @@
+# infrastructure/argocd/applications/store-front-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: store-front
+  namespace: argocd
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: storefront=591234613960.dkr.ecr.us-east-1.amazonaws.com/store-front
+    argocd-image-updater.argoproj.io/storefront.update-strategy: semver
+    argocd-image-updater.argoproj.io/storefront.allow-tags: regexp:^[0-9]+\.[0-9]+\.[0-9]+-.+$
+    argocd-image-updater.argoproj.io/storefront.ignore-tags: latest, dev, staging
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: argocd-notifications
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: argocd-notifications
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: store-front
+    app.kubernetes.io/part-of: store-app
+    deployment-strategy: canary
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/prasad-moru/GenAiStoreApp.git
+    targetRevision: main
+    path: helm-charts/store-front
+    helm:
+      releaseName: store-front
+      valueFiles:
+        - values.yaml
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: application
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers:
+        - /spec/replicas
+  
+  revisionHistoryLimit: 10

@@ -1,0 +1,266 @@
+# helm-charts/store-front/values.yaml
+replicaCount: 2
+
+image:
+  repository: 591234613960.dkr.ecr.us-east-1.amazonaws.com/store-front
+  tag: "1.0.3-106c4bb"  
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "store-front"
+
+service:
+  name: store-front
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+# ALB Ingress Configuration - For external customer traffic
+ingress:
+  enabled: true 
+  annotations:
+    alb.ingress.kubernetes.io/tags: Environment=production,Team=platform,Service=store-front
+  hosts:
+    - host: "store.devopswala.com"  
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: store-front-tls
+      hosts:
+        - store.devopswala.com
+  alb:
+    scheme: internet-facing
+    targetType: ip
+    certificateArn: arn:aws:acm:us-east-1:591234613960:certificate/06ac2794-5e52-4e53-b96f-f619842230da
+
+# Argo Rollouts Strategy - BLUE-GREEN
+strategy:
+  type: blueGreen
+  blueGreen:
+    activeService: store-front
+    previewService: store-front-preview
+    autoPromotionEnabled: true  # ✅ Only ONE instance
+    autoPromotionSeconds: 300
+    scaleDownDelaySeconds: 300
+    prePromotionAnalysis:
+      templates:
+        - templateName: store-front-analysis
+    postPromotionAnalysis:
+      templates:
+        - templateName: store-front-analysis
+
+# Istio Configuration
+istio:
+  enabled: true 
+  gateway:
+    enabled: false
+    name: store-gateway
+    hosts:
+      - "*"
+  virtualService:
+    enabled: true
+    hosts:
+      - store-front
+      - store-front.application.svc.cluster.local
+    # ✅ ADD: Preview header routing configuration
+    previewHeaderRouting:
+      enabled: true
+      headerName: x-preview
+      headerValue: "true"
+  destinationRule:
+    enabled: true 
+
+# HPA Configuration
+autoscaling:
+  enabled: true
+  minReplicas: 2  
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 1
+          periodSeconds: 15
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 5
+    failureThreshold: 3
+    periodSeconds: 5
+  readiness:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 3
+    failureThreshold: 3
+    periodSeconds: 5
+  liveness:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 3
+    failureThreshold: 5
+    periodSeconds: 3
+
+# Environment variables
+env:
+  - name: VUE_APP_ORDER_SERVICE_URL
+    value: "http://order-service.application.svc.cluster.local:3000/"
+  - name: VUE_APP_PRODUCT_SERVICE_URL
+    value: "http://product-service.application.svc.cluster.local:3002/"
+  
+  - name: VUE_APP_DATADOG_RUM_ENABLED
+    value: "true"
+  - name: VUE_APP_DATADOG_RUM_APPLICATION_ID
+    valueFrom:
+      secretKeyRef:
+        name: datadog-rum-secret-sf
+        key: application-id
+  - name: VUE_APP_DATADOG_RUM_CLIENT_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: datadog-rum-secret-sf
+        key: client-token
+  - name: VUE_APP_DATADOG_SITE
+    value: "us5.datadoghq.com"
+  - name: VUE_APP_DATADOG_SERVICE
+    value: "store-front"
+  - name: VUE_APP_DATADOG_ENV
+    value: "production"
+  - name: VUE_APP_VERSION
+    value: "1.0.1"  
+
+# Init containers
+initContainers:
+  - name: wait-for-order-service
+    image: busybox:1.36
+    command: 
+      - 'sh'
+      - '-c'
+      - 'until nc -zv order-service.application.svc.cluster.local 3000; do echo waiting for order-service; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 100Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+  - name: wait-for-product-service
+    image: busybox:1.36
+    command: 
+      - 'sh'
+      - '-c'
+      - 'until nc -zv product-service.application.svc.cluster.local 3002; do echo waiting for product-service; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 100Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+# Vault Configuration
+vault:
+  enabled: false
+
+# Datadog Configuration
+datadog:
+  enabled: true
+  env: production
+  service: store-front
+  logs:
+    enabled: true
+  apm:
+    enabled: false
+  profiling:
+    enabled: false
+  rum:
+    enabled: true
+    site: us5.datadoghq.com
+    sessionSampleRate: 100
+    sessionReplaySampleRate: 20
+    trackUserInteractions: true
+    trackResources: true
+    trackLongTasks: true
+    trackFrustrations: true
+    
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+# Analysis Template Configuration
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    metrics:
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:store-front,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"
+        failureLimit: 3
+        interval: 1m
+        count: 5
+      
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:store-front,env:production}"
+        successCondition: "default(result, 0) < 2000"
+        failureLimit: 3
+        interval: 1m
+        count: 5
+      
+      # - name: request-count  # ✅ ENABLED - Important for production
+      #   query: "sum:trace.http.request.hits{service:store-front,env:production}.as_count()"
+      #   successCondition: "default(result, 0) > 0"
+      #   failureLimit: 3
+      #   interval: 1m
+      #   count: 5

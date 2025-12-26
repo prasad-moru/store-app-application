@@ -1,0 +1,15 @@
+{
+  "role_type": "jwt",
+  "bound_audiences": [
+    "https://github.com/prasad-moru"
+  ],
+  "user_claim": "actor",
+  "bound_claims_type": "glob",
+  "bound_claims": {
+    "sub": "repo:prasad-moru/GenAiStoreApp:*"
+  },
+  "policies": [
+    "github-actions"
+  ],
+  "token_ttl": "9h"
+}

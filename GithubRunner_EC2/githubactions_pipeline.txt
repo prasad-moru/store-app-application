@@ -1,0 +1,45 @@
+
+
+1. step one analyze the source code with SonarQube. sonar-scanner Configured in aws Ec2 instance along with GitHubActions SelfHosted runner
+2. install the dependencies 
+3. Scan (Analyze the dependencies ) with OWASP DependencyCheck which is Configured in aws Ec2 instance in GitHubActions SelfHosted runner
+4. i want store OWASP dependencies check reports
+5. build the Container Image (Docker enginer is setup in aws ec2 instance where SelfHosted runner working.)
+6. i want to make proper image tagging. Semantic Versioning v1.0.3 with commit ID. i am using Argo Image updater, and Argo rollouts. Every image with tag should be maintaining in AWS ECR for better understanding and easy rollbacks. 
+7. after tagging Container Image should be scan with Trivy (trivy is configured and setting up in AWS EC2 instance where SelfHosted runner is).
+8. Publishing(Publishing) Final Image to AWS ECR 
+9. delete the images because if all created images are kept into the server server storage will be increased. 
+
+
+
+What's your application type?
+
+this is a polyglot microservices project 
+these are the services are i am using for my project. 
+ai-service requires : Python3 pip
+makeline service requires: Go
+Orders service requires: Node.js
+product Service requires : Rust
+store-admin service requires: Node.js Vue CLI Service
+store-front service requires: Node.js Vue CLI Service
+virtual-customer service requires: Rust
+virtual-worker service requires: Rust
+
+Where do you want to store these reports?
+i would prefer As GitHub Actions artifacts
+
+Should the semantic version be manually specified or auto-incremented?
+ this is 1.0.3-abc1234 better. and it should be Auto-incremented
+
+ Should the pipeline fail if Trivy finds HIGH/CRITICAL vulnerabilities?
+ don't make fail. it should run anyway. because i am creating project. for tutorials.
+ 
+ Trigger Events: When should this workflow run?
+ main only and it should be manually trigger as of now. 
+
+ ECR Repository: Is it already created, or should we include creation logic?
+ ECR Repository is already created. 
+
+
+
+

@@ -1,0 +1,16 @@
+# ===================================================================
+# FILE: helm-charts/mongodb/Chart.yaml
+# ===================================================================
+apiVersion: v2
+name: mongodb
+description: MongoDB Database for Store Application
+type: application
+version: 1.0.0
+appVersion: "6.0.6"
+keywords:
+  - database
+  - mongodb
+  - nosql
+maintainers:
+  - name: Bhavaniprasad
+    email: prasadmoru@gmail.com

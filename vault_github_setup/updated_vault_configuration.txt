@@ -1,0 +1,221 @@
+
+# Install prerequisites
+
+sudo apt update
+
+sudo apt install -y curl gpg software-properties-common
+
+# Add HashiCorp GPG key
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+# Add repository
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+# Install Vault
+
+sudo apt update
+
+sudo apt install -y vault
+
+
+
+# Install PostgreSQL
+sudo apt install -y postgresql postgresql-contrib
+
+# Switch to postgres user
+sudo -i -u postgres
+
+# Create vault user and database
+psql -c "CREATE DATABASE vault;"
+psql -c "CREATE ROLE vault WITH LOGIN PASSWORD 'Admin123';"
+psql -c "GRANT ALL PRIVILEGES ON DATABASE vault TO vault;"
+
+# Exit postgres user
+exit
+
+
+while installing vault /etc/vault.d/vault.hcl is created.
+
+sudo tee /etc/vault.d/vault.hcl <<EOF
+storage "postgresql" {
+  connection_url = "postgresql://vault:Admin123@localhost:5432/vault?sslmode=disable"
+}
+
+listener "tcp" {
+  address     = "0.0.0.0:8200"
+  tls_disable = 1
+}
+
+api_addr = "http://52.90.156.111:8200"
+ui = true
+EOF
+
+i have used my ec2 instance public ip address 
+  created user for vault,   username=vault password=your_strong_password
+
+
+# Create systemd service file
+sudo tee /etc/systemd/system/vault.service <<EOF
+[Unit]
+Description=Vault
+Documentation=https://www.vaultproject.io/docs/
+After=network.target postgresql.service
+
+[Service]
+User=vault
+Group=vault
+ExecStart=/usr/bin/vault server -config=/etc/vault.d/vault.hcl
+ExecReload=/bin/kill -HUP \$MAINPID
+LimitNOFILE=65536
+CapabilityBoundingSet=CAP_SYSLOG CAP_IPC_LOCK
+Capabilities=CAP_IPC_LOCK+ep
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create vault user and set permissions
+sudo useradd --system --home /etc/vault.d --shell /bin/false vault
+
+ubuntu@ip-172-31-47-154:~$ sudo useradd --system --home /etc/vault.d --shell /bin/false vault
+useradd: user 'vault' already exists
+
+sudo chown -R vault:vault /etc/vault.d
+sudo chmod 640 /etc/vault.d/vault.hcl
+
+# Enable and start Vault
+sudo systemctl enable vault
+sudo systemctl start vault
+
+
+
+export VAULT_ADDR='http://127.0.0.1:8200'
+
+# Initialize Vault
+vault operator init
+
+# This will output 5 unseal keys and an initial root token
+# Save these securely!
+
+# Unseal Vault (you'll need to do this 3 times with different keys)
+vault operator unseal
+
+
+sudo vault server -config=/etc/vault.d/vault.hcl
+
+
+
+sudo -i -u postgres psql -d vault <<EOF
+CREATE TABLE IF NOT EXISTS vault_kv_store (
+  parent_path TEXT COLLATE "C" NOT NULL,
+  path        TEXT COLLATE "C",
+  key         TEXT COLLATE "C",
+  value       BYTEA,
+  CONSTRAINT pkey PRIMARY KEY (path, key)
+);
+
+CREATE INDEX IF NOT EXISTS parent_path_idx ON vault_kv_store (parent_path);
+
+CREATE TABLE IF NOT EXISTS vault_ha_locks (
+  ha_key                                      TEXT COLLATE "C" NOT NULL,
+  ha_identity                                 TEXT COLLATE "C" NOT NULL,
+  ha_value                                    TEXT COLLATE "C",
+  valid_until                                 TIMESTAMP WITH TIME ZONE NOT NULL,
+  CONSTRAINT ha_key PRIMARY KEY (ha_key)
+);
+
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO vault;
+EOF
+
+
+sudo -i -u postgres psql -d vault -c "\dt"
+
+
+this below configuration is added for updated configurations applying by restarting and vault service. 
+
+
+# Stop any manually running vault processes first
+sudo pkill vault
+
+# Restart the service
+sudo systemctl restart vault
+
+# Check status
+sudo systemctl status vault
+
+# Check logs
+sudo journalctl -u vault -n 50 --no-pager
+
+# Switch to postgres user
+sudo -i -u postgres
+
+# Connect to the vault database and grant permissions
+psql -d vault <<EOF
+-- Grant schema permissions
+GRANT ALL PRIVILEGES ON SCHEMA public TO vault;
+
+-- Grant permissions on all existing tables
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO vault;
+
+-- Grant permissions on all sequences
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO vault;
+
+-- Set default privileges for future objects
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO vault;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO vault;
+
+-- Verify permissions
+\du vault
+\l vault
+EOF
+
+# Exit postgres user
+exit
+
+# Set environment variable
+export VAULT_ADDR='http://127.0.0.1:8200'
+
+# Check if Vault is reachable
+curl http://127.0.0.1:8200/v1/sys/health
+
+# Initialize (only if not already initialized)
+vault operator init
+
+# Save the output! You'll get 5 unseal keys and 1 root token
+
+# Unseal Vault (run this 3 times with different keys)
+vault operator unseal keyvalues
+vault operator unseal keyvalues
+vault operator unseal keyvalues
+
+# Check status
+vault status
+
+
+
+
+
+ubuntu@ip-172-31-23-230:~$ vault operator init
+Unseal Key 1: keyvalues
+Unseal Key 2: keyvalues
+Unseal Key 3: keyvalues
+Unseal Key 4: keyvalues
+Unseal Key 5: keyvalues
+
+Initial Root Token: keyvalues
+
+Vault initialized with 5 key shares and a key threshold of 3. Please securely
+distribute the key shares printed above. When the Vault is re-sealed,
+restarted, or stopped, you must supply at least 3 of these keys to unseal it
+before it can start servicing requests.
+
+Vault does not store the generated root key. Without at least 3 keys to
+reconstruct the root key, Vault will remain permanently sealed!
+
+It is possible to generate new unseal keys, provided you have a quorum of
+existing unseal keys shares. See "vault operator rekey" for more information.
+
+# Unseal Vault (run this 3 times with different keys)
+vault operator unseal keyvalues
+vault operator unseal keyvalues
+vault operator unseal keyvalues

@@ -1,0 +1,234 @@
+# helm-charts/ai-service/values.yaml
+# Default values for ai-service
+
+replicaCount: 2
+
+image:
+  repository: 591234613960.dkr.ecr.us-east-1.amazonaws.com/ai-service
+  tag: "1.0.1-c7c7679"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "ai-service"
+
+service:
+  name: ai-service
+  type: ClusterIP
+  port: 5001
+  targetPort: 5001
+
+# Argo Rollouts Strategy - OPTIMIZED
+strategy:
+  type: canary
+  canary:
+    dynamicStableScale: true    # Enable proportional scaling
+    maxSurge: "25%"              # Allow 25% extra pods during rollout
+    maxUnavailable: 0            # Keep all pods available
+    
+    steps:
+      - setWeight: 20
+      - setCanaryScale:
+          weight: 20
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: ai-service-analysis
+      
+      - setWeight: 40
+      - setCanaryScale:
+          weight: 40
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: ai-service-analysis
+      
+      - setWeight: 60
+      - setCanaryScale:
+          weight: 60
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: ai-service-analysis
+      
+      - setWeight: 80
+      - setCanaryScale:
+          weight: 80
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: ai-service-analysis
+      
+      - setWeight: 100
+    
+    trafficRouting:
+      istio:
+        virtualService:
+          name: ai-service
+          routes:
+            - primary
+    
+    analysisInterval: 1m
+    analysisSuccessCount: 2
+    analysisFailureLimit: 3    
+
+# Istio Configuration
+istio:
+  enabled: true
+  gateway:
+    enabled: false
+  virtualService:
+    enabled: true
+    hosts:
+      - ai-service
+  destinationRule:
+    enabled: true
+
+# HPA Configuration - OPTIMIZED
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6            # Increased for headroom
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 3
+          periodSeconds: 30
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 200m
+    memory: 150Mi
+  limits:
+    cpu: 400m
+    memory: 300Mi
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 5001
+    initialDelaySeconds: 90     # Reduced from 120
+    failureThreshold: 30
+    periodSeconds: 5
+  readiness:
+    httpGet:
+      path: /health
+      port: 5001
+    initialDelaySeconds: 10
+    failureThreshold: 10
+    periodSeconds: 10
+  liveness:
+    httpGet:
+      path: /health
+      port: 5001
+    initialDelaySeconds: 15
+    failureThreshold: 10
+    periodSeconds: 10
+
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "8200,8201"
+  proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+
+# Environment variables
+env:
+  - name: USE_AZURE_OPENAI
+    value: "False"
+  - name: AZURE_OPENAI_DALLE_DEPLOYMENT_NAME
+    value: "dall-e-3"
+  - name: AZURE_OPENAI_DALLE_ENDPOINT
+    value: "https://store-app.openai.azure.com"
+  - name: AZURE_OPENAI_API_VERSION
+    value: "2024-02-15-preview"
+  - name: USE_AZURE_AD
+    value: "False"
+
+# Vault Configuration
+vault:
+  enabled: true
+  role: "ai-service"
+  secrets:
+    openai:
+      path: "kv/data/ai-service"
+      template: |
+        {{- with secret "kv/data/ai-service" -}}
+        export OPENAI_API_KEY={{ printf "%q" .Data.data.openai_api_key }}
+        export OPENAI_ORG_ID={{ printf "%q" .Data.data.openai_org_id }}
+        export AZURE_OPENAI_API_KEY={{ printf "%q" .Data.data.azure_openai_api_key }}
+        {{ end }}
+
+# Datadog Configuration
+datadog:
+  enabled: true
+  env: production
+  service: ai-service
+  logs:
+    enabled: true
+  apm:
+    enabled: true
+    language: python
+  profiling:
+    enabled: false
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podLabels: {}
+
+# Analysis Template Configuration - OPTIMIZED
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    secretNamespace: application
+    apiUrl: https://api.us5.datadoghq.com
+    metrics:
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:ai-service,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"
+        failureLimit: 3
+        interval: 1m
+        count: 8                  # Increased for 3m pause
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:ai-service,env:production}"
+        successCondition: "default(result, 0) < 1000"
+        failureLimit: 3
+        interval: 1m
+        count: 8                  # Increased for 3m pause

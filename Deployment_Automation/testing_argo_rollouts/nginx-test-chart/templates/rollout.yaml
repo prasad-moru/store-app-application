@@ -1,0 +1,105 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      # Main nginx container
+      - name: nginx
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 80
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+      
+      # Nginx Prometheus Exporter sidecar
+      - name: nginx-exporter
+        image: nginx/nginx-prometheus-exporter:1.1.0
+        args:
+        - -nginx.scrape-uri=http://localhost:80/stub_status
+        ports:
+        - name: metrics
+          containerPort: 9113
+        resources:
+          requests:
+            cpu: 10m
+            memory: 20Mi
+          limits:
+            cpu: 50m
+            memory: 50Mi
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: {{ .Chart.Name }}-nginx-config
+  
+  strategy:
+    {{- if eq .Values.strategy.type "canary" }}
+    canary:
+      canaryService: {{ .Chart.Name }}-canary
+      stableService: {{ .Chart.Name }}-stable
+      steps:
+      {{- range .Values.strategy.canary.steps }}
+      {{- if .setWeight }}
+      - setWeight: {{ .setWeight }}
+      {{- else if .pause }}
+      - pause:
+          {{- if .pause.duration }}
+          duration: {{ .pause.duration }}
+          {{- end }}
+      {{- else if .analysis }}
+      - analysis:
+          templates:
+          {{- range .analysis.templates }}
+          - templateName: {{ .templateName }}
+          {{- end }}
+      {{- end }}
+      {{- end }}
+    {{- end }}

@@ -1,0 +1,35 @@
+# 1. Ensure dependencies are running
+kubectl get pods -n platform | grep -E 'rabbitmq|mongodb'
+
+# 2. Create Vault role for makeline-service
+vault write auth/kubernetes/role/makeline-service \
+    bound_service_account_names=makeline-service \
+    bound_service_account_namespaces=application \
+    policies=order-service \
+    ttl=24h
+
+# 3. Test Helm template
+helm template makeline-service ./helm-charts/makeline-service --namespace application --debug
+
+# 4. Deploy via ArgoCD
+kubectl apply -f infrastructure/argocd/applications/makeline-service-app.yaml
+
+
+# 1. Create Vault policy for makeline-service
+vault policy write makeline-service - <<EOF
+path "kv/data/makeline-service" {
+  capabilities = ["read"]
+}
+EOF
+
+# 2. Write secrets to Vault
+vault kv put kv/makeline-service \
+    rabbitmq_username="username" \
+    rabbitmq_password="password"
+
+# 3. Create Vault role
+vault write auth/kubernetes/role/makeline-service \
+    bound_service_account_names=makeline-service \
+    bound_service_account_namespaces=application \
+    policies=makeline-service \
+    ttl=24h

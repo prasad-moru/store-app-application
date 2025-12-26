@@ -1,0 +1,144 @@
+## Bitnami SonarQube Helm Chart Values
+## Using AWS ECR Public images
+
+## Global parameters
+global:
+  storageClass: "gp2"
+  security:
+    allowInsecureImages: true  # Required for non-Bitnami images
+
+## SonarQube image from AWS ECR Public
+image:
+  registry: public.ecr.aws
+  repository: bitnami/sonarqube
+  tag: 25.8.0-debian-12-r2
+  pullPolicy: IfNotPresent
+
+## SonarQube configuration
+sonarqubeUsername: admin
+sonarqubePassword: "AdminPassword123!"  # Change after first login!
+sonarqubeEmail: admin@example.com
+
+## External Database Configuration
+externalDatabase:
+  host: postgresql.platform.svc.cluster.local
+  port: 5432
+  user: sonarqube
+  password: "SonarPass123!"
+  database: sonarqube
+  existingSecret: ""
+
+## Disable built-in PostgreSQL
+postgresql:
+  enabled: false
+
+## Service configuration
+service:
+  type: ClusterIP
+  ports:
+    http: 9000
+
+## Resource limits
+resources:
+  requests:
+    cpu: 2000m
+    memory: 4Gi
+  limits:
+    cpu: 4000m
+    memory: 6Gi
+
+## Persistence
+persistence:
+  enabled: true
+  storageClass: "gp2"
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+
+## Init containers to set sysctl values
+sysctl:
+  enabled: true
+  image:
+    registry: public.ecr.aws
+    repository: bitnami/os-shell
+    tag: 12-debian-12-r30
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+## Container security context
+containerSecurityContext:
+  enabled: true
+  runAsUser: 1001
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 1001
+
+## Readiness and liveness probes
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 60
+  successThreshold: 1
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 100
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 100
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+## Service Account
+serviceAccount:
+  create: true
+  name: sonarqube
+
+## Ingress (optional - configure after initial setup)
+ingress:
+  enabled: false
+  hostname: sonarqube.example.com
+  ingressClassName: alb
+  annotations: {}
+  tls: false
+
+## Metrics (Prometheus)
+metrics:
+  enabled: false
+
+## Node selector (optional)
+nodeSelector: {}
+
+## Tolerations (optional)
+tolerations: []
+
+## Affinity (optional)
+affinity: {}
+
+## Extra environment variables
+extraEnvVars:
+  - name: SONAR_JDBC_URL
+    value: "jdbc:postgresql://postgresql.platform.svc.cluster.local:5432/sonarqube"
+  - name: SONAR_JDBC_USERNAME
+    value: "sonarqube"
+  - name: SONAR_JDBC_PASSWORD
+    value: "SonarPass123!"
+  - name: SONARQUBE_JAVA_OPTS
+    value: "-Xmx3072m -Xms3072m -XX:+HeapDumpOnOutOfMemoryError"

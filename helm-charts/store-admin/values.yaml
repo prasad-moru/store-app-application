@@ -1,0 +1,273 @@
+# helm-charts/store-admin/values.yaml
+replicaCount: 2
+
+image:
+  repository: 591234613960.dkr.ecr.us-east-1.amazonaws.com/store-admin
+  tag: "1.0.2-a955147"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "store-admin"
+
+service:
+  name: store-admin
+  type: ClusterIP
+  port: 80
+  targetPort: 8081
+
+# ALB Ingress Configuration - For external traffic
+ingress:
+  enabled: true
+  annotations:
+    # Additional custom annotations if needed
+    alb.ingress.kubernetes.io/tags: Environment=production,Team=platform,Service=store-admin
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-port: '8081'  # ✅ Matches targetPort
+    alb.ingress.kubernetes.io/tags: Environment=production,Team=platform
+  hosts:
+    - host: "admin.devopswala.com"  # Leave empty for ALB-generated DNS, or add custom domain
+      paths:
+        - path: /
+          pathType: Prefix
+
+  tls:
+    - secretName: store-admin-tls
+      hosts:
+        - admin.devopswala.com
+  alb:
+    scheme: internet-facing
+    targetType: ip
+    certificateArn: arn:aws:acm:us-east-1:591234613960:certificate/66bebb56-7411-409d-bf05-69b06f8db1a2
+
+# Argo Rollouts Strategy - BLUE-GREEN
+strategy:
+  type: blueGreen
+  blueGreen:
+    activeService: store-admin
+    previewService: store-admin-preview
+    autoPromotionEnabled: true
+    autoPromotionSeconds: 300
+    scaleDownDelaySeconds: 300
+    prePromotionAnalysis:
+      templates:
+        - templateName: store-admin-analysis
+    postPromotionAnalysis:
+      templates:
+        - templateName: store-admin-analysis
+
+# Istio Configuration
+istio:
+  enabled: true
+  gateway:
+    enabled: false
+    name: store-gateway
+    hosts:
+      - "*"
+  virtualService:
+    enabled: true
+    hosts:
+      - store-admin
+      - store-admin.application.svc.cluster.local
+    # ✅ ADD: Preview header routing (disabled by default)
+    previewHeaderRouting:
+      enabled: false  # Set to true when you need preview testing
+      headerName: x-preview
+      headerValue: "true"
+  destinationRule:
+    enabled: true
+
+# HPA Configuration - Fast Scaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 1
+          periodSeconds: 15
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 5
+    failureThreshold: 3
+    periodSeconds: 5
+  readiness:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 3
+    failureThreshold: 3
+    periodSeconds: 5
+  liveness:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 3
+    failureThreshold: 5
+    periodSeconds: 3
+
+# Environment variables
+env:
+  - name: VUE_APP_PRODUCT_SERVICE_URL
+    value: "http://product-service.application.svc.cluster.local:3002/"
+  - name: VUE_APP_MAKELINE_SERVICE_URL
+    value: "http://makeline-service.application.svc.cluster.local:3001/"
+    # ✅ FIXED: Match your datadog-rum.js variable names
+  - name: VUE_APP_DATADOG_RUM_ENABLED
+    value: "true"
+  - name: VUE_APP_DATADOG_RUM_APPLICATION_ID
+    valueFrom:
+      secretKeyRef:
+        name: datadog-rum-secret-sd
+        key: application-id
+  - name: VUE_APP_DATADOG_RUM_CLIENT_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: datadog-rum-secret-sd
+        key: client-token
+  - name: VUE_APP_DATADOG_SITE
+    value: "us5.datadoghq.com"
+  - name: VUE_APP_DATADOG_SERVICE
+    value: "store-admin"
+  - name: VUE_APP_DATADOG_ENV
+    value: "production"
+  - name: VUE_APP_VERSION
+    value: "1.0.1"  
+
+
+
+# Init containers
+initContainers:
+  - name: wait-for-product-service
+    image: busybox:1.36
+    command: 
+      - 'sh'
+      - '-c'
+      - 'until nc -zv product-service.application.svc.cluster.local 3002; do echo waiting for product-service; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 100Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+  - name: wait-for-makeline-service
+    image: busybox:1.36
+    command: 
+      - 'sh'
+      - '-c'
+      - 'until nc -zv makeline-service.application.svc.cluster.local 3001; do echo waiting for makeline-service; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 100Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+# Vault Configuration
+vault:
+  enabled: false
+
+# Datadog Configuration
+datadog:
+  enabled: true
+  env: production
+  service: store-admin
+  logs:
+    enabled: true
+  apm:
+    enabled: false
+  profiling:
+    enabled: false
+  rum:
+    enabled: true
+    site: us5.datadoghq.com
+    sessionSampleRate: 100
+    sessionReplaySampleRate: 20
+    trackUserInteractions: true
+    trackResources: true
+    trackLongTasks: true
+    trackFrustrations: true
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+# Analysis Template Configuration - SIMPLE & WORKING
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    metrics:
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:store-admin,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"  # Less than 5% error rate
+        failureLimit: 3
+        interval: 1m
+        count: 5
+      
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:store-admin,env:production}"
+        successCondition: "default(result, 0) < 2000"  # Less than 2s latency
+        failureLimit: 3
+        interval: 1m
+        count: 5
+      
+      # - name: request-count
+      #   query: "sum:trace.http.request.hits{service:store-admin,env:production}.as_count()"
+      #   successCondition: "default(result, 0) > 0"  # At least some traffic
+      #   failureLimit: 3
+      #   interval: 1m
+      #   count: 5

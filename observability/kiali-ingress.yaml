@@ -1,0 +1,61 @@
+# kiali-ingress.yaml - ALB Ingress for Kiali
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kiali-ingress
+  # namespace: istio-system
+  annotations:
+    # ALB Ingress Controller annotations
+    kubernetes.io/ingress.class: alb
+    
+    # ALB scheme - internet-facing for public access
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    
+    # ALB target type - IP mode (recommended for EKS)
+    alb.ingress.kubernetes.io/target-type: ip
+    
+    # HTTPS listener
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    
+    # SSL certificate ARN - REPLACE WITH YOUR CERTIFICATE ARN
+    #alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:YOUR-ACCOUNT-ID:certificate/YOUR-CERT-ID
+    
+    # Redirect HTTP to HTTPS
+    #alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    # Backend protocol (Kiali uses HTTP)
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    
+    # Health check configuration
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    
+    # Success codes
+    alb.ingress.kubernetes.io/success-codes: '200'
+    
+    # Tags for ALB (optional)
+    #alb.ingress.kubernetes.io/tags: Environment=production,Application=kiali
+    
+    # WAF (optional - uncomment if you have WAF)
+    # alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:us-east-1:123456789012:regional/webacl/...
+
+spec:
+  ingressClassName: alb
+  
+  rules:
+    # Kiali on kiali.devopsproductions.com
+    - host: kiali.devopswala.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kiali
+                port:
+                  number: 20001

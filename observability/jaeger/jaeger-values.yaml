@@ -1,0 +1,72 @@
+# jaeger-values.yaml - For AWS EKS with Istio integration
+
+# Use all-in-one deployment (simple for dev/test)
+# For production, use separate collector, query, agent
+provisionDataStore:
+  cassandra: false
+  elasticsearch: false
+
+# All-in-one mode (collector + query + agent in one pod)
+allInOne:
+  enabled: true
+  
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Storage backend - using memory (ephemeral)
+  # For production, use Elasticsearch or Cassandra
+  args:
+    - "--memory.max-traces=10000"  # Keep last 10k traces in memory
+  
+  # Expose ports
+  # 9411: Zipkin compatible endpoint (Istio will use this)
+  # 16686: Jaeger UI
+  # 14268: Jaeger collector HTTP
+  service:
+    type: ClusterIP
+
+# Disable separate components (using all-in-one)
+agent:
+  enabled: false
+
+collector:
+  enabled: false
+
+query:
+  enabled: false
+
+# Storage configuration
+storage:
+  type: memory  # Options: memory, badger, cassandra, elasticsearch
+  
+  # For production with persistence, use badger:
+  # type: badger
+  # badger:
+  #   ephemeral: false
+  #   persistence:
+  #     enabled: true
+  #     storageClassName: gp2
+  #     size: 5Gi
+
+# Hotrod demo app (optional - disable for production)
+hotrod:
+  enabled: false
+
+# Sampling strategy
+# This controls what percentage of traces are collected
+# For production, start with 1% (0.01)
+# For testing, use 100% (1.0)
+sampling:
+  strategies: |
+    {
+      "default_strategy": {
+        "type": "probabilistic",
+        "param": 1.0
+      }
+    }

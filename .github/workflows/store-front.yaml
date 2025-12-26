@@ -1,0 +1,291 @@
+name: Store-Front service
+
+on:
+  workflow_dispatch: {}     # manual trigger — will still auto-increment from ECR
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'src/store-front/**'
+  #     - '.github/workflows/store-front.yaml'
+
+env:
+  SERVICE_NAME: store-front
+  SERVICE_PATH: src/store-front
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  SONAR_HOST_URL: https://sonarcloud.io
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+  NODE_VERSION: 'v18.20.8'
+
+jobs:
+  # ==========================================
+  # JOB 1: SonarQube Code Analysis
+  # ==========================================
+  sonarqube-analysis:
+    name: SonarQube Code Analysis
+    runs-on: self-hosted
+    environment: store-app
+    
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      short_sha: ${{ steps.tag.outputs.short_sha }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Image Tag
+        id: tag
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(git rev-parse --short=7 HEAD || echo "nosha")
+          echo "🔍 Commit SHA: ${SHORT_SHA}"
+          echo "Trigger event: ${{ github.event_name }}"
+
+          # Fetch latest image tag from ECR (most recent pushed)
+          echo "🔍 Querying ECR for latest tag of repository: ${{ env.SERVICE_NAME }} (region: ${{ env.AWS_REGION }})"
+          LATEST_TAG=$(aws ecr describe-images \
+            --repository-name "${{ env.SERVICE_NAME }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+            --output text 2>/dev/null || echo "")
+
+          # Normalize results and handle cases where there are no tags or "None"
+          if [ -z "${LATEST_TAG}" ] || [ "${LATEST_TAG}" = "None" ] || [ "${LATEST_TAG}" = "null" ]; then
+            echo "⚠️ No valid tag found in ECR. Starting base version 1.0.0"
+            BASE_VERSION="1.0.0"
+          else
+            echo "🔎 Latest tag from ECR: ${LATEST_TAG}"
+            if [[ ${LATEST_TAG} =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              BASE_VERSION="${BASH_REMATCH[1]}"
+              echo "ℹ️ Found semantic base version: ${BASE_VERSION}"
+            else
+              # If tag contains suffix (like 1.0.5-abc1234) extract semantic prefix
+              if [[ ${LATEST_TAG} =~ ^([0-9]+\.[0-9]+\.[0-9]+)-.*$ ]]; then
+                BASE_VERSION="${BASH_REMATCH[1]}"
+                echo "ℹ️ Extracted semantic base version from tagged name: ${BASE_VERSION}"
+              else
+                echo "⚠️ Latest tag does not contain semantic version. Defaulting to 1.0.0"
+                BASE_VERSION="1.0.0"
+              fi
+            fi
+          fi
+
+          # Auto-increment patch version
+          IFS='.' read -r major minor patch <<< "${BASE_VERSION}"
+          # safety: if any component missing, default to 1.0.0
+          major=${major:-1}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          NEXT_PATCH=$((patch + 1))
+          VERSION="${major}.${minor}.${NEXT_PATCH}"
+          IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+
+          echo "✅ Generated version: ${VERSION}"
+          echo "✅ Image tag: ${IMAGE_TAG}"
+
+          # Export outputs
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Step summary
+          echo "### 🏷️ Image Tag Generated" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Base version used:** ${BASE_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "**New version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit SHA:** ${SHORT_SHA}" >> $GITHUB_STEP_SUMMARY
+          echo "**Full Tag:** ${IMAGE_TAG}" >> $GITHUB_STEP_SUMMARY
+
+      - name: SonarQube Code Analysis (SonarCloud)
+        working-directory: ${{ env.SERVICE_PATH }}
+        run: |
+          echo "🔍 Starting SonarCloud analysis for Store Admin Service..."
+          
+          sonar-scanner \
+            -Dsonar.projectKey=store-front\
+            -Dsonar.organization=${{ env.SONAR_ORGANIZATION }} \
+            -Dsonar.projectName="store-front" \
+            -Dsonar.sources=src \
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/**,**/*.spec.js,**/*.test.js,**/*.spec.ts,**/*.test.ts \
+            -Dsonar.tests=src \
+            -Dsonar.test.inclusions=**/*.spec.js,**/*.test.js,**/*.spec.ts,**/*.test.ts \
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ env.SONAR_TOKEN }} \
+            -Dsonar.projectVersion=${{ steps.tag.outputs.version }}
+          
+          echo "✅ SonarCloud analysis completed" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # JOB 2: OWASP Dependency Check
+  # ==========================================
+  owasp-dependency-check:
+    name: OWASP Dependency Check
+    runs-on: self-hosted
+    environment: store-app
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: OWASP Dependency Check
+        working-directory: ${{ env.SERVICE_PATH }}
+        run: |
+          echo "🛡️ Running OWASP Dependency Check..."
+          mkdir -p dependency-check-report
+          if [ ! -f dependency-check-suppressions.xml ]; then
+            cat > dependency-check-suppressions.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+          </suppressions>
+          EOF
+          fi
+          dependency-check.sh \
+            --project "${{ env.SERVICE_NAME }}" \
+            --scan . \
+            --format ALL \
+            --out ./dependency-check-report \
+            --suppression ./dependency-check-suppressions.xml \
+            --enableExperimental \
+            --disableOssIndex \
+            2>&1 | tee dependency-check.log || true
+          echo "✅ OWASP Dependency Check completed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload OWASP Dependency Check Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dependency-report-${{ env.SERVICE_NAME }}-${{ github.run_number }}
+          path: |
+            ${{ env.SERVICE_PATH }}/dependency-check-report/
+            ${{ env.SERVICE_PATH }}/dependency-check.log
+          retention-days: 30
+
+      - name: OWASP Report Summary
+        if: always()
+        run: |
+          echo "### 🛡️ OWASP Dependency Check Report" >> $GITHUB_STEP_SUMMARY
+          echo "Report uploaded as artifact: \`owasp-dependency-report-${{ env.SERVICE_NAME }}-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # JOB 3: Build, Scan, and Push to ECR
+  # ==========================================
+  build-scan-push:
+    name: Build, Trivy Scan & Push to ECR
+    runs-on: self-hosted
+    environment: store-app
+    needs: [sonarqube-analysis, owasp-dependency-check]
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Docker Image
+        working-directory: ${{ env.SERVICE_PATH }}
+        run: |
+          echo "🐳 Building Docker image..."
+          docker build \
+            --no-cache \
+            -t ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} \
+            --build-arg VERSION=${{ needs.sonarqube-analysis.outputs.version }} \
+            --build-arg COMMIT_SHA=${{ needs.sonarqube-analysis.outputs.short_sha }} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            --build-arg CACHE_BUSTER=$(date +%s) \
+            --build-arg VUE_APP_DATADOG_RUM_ENABLED=true \
+            --build-arg VUE_APP_DATADOG_RUM_APPLICATION_ID=${{ secrets.DATADOG_RUM_APPLICATION_ID_SF }} \
+            --build-arg VUE_APP_DATADOG_RUM_CLIENT_TOKEN=${{ secrets.DATADOG_RUM_CLIENT_TOKEN_SF }} \
+            --build-arg VUE_APP_DATADOG_SITE=us5.datadoghq.com \
+            --build-arg VUE_APP_DATADOG_SERVICE=${{ env.SERVICE_NAME }} \
+            --build-arg VUE_APP_DATADOG_ENV=production \
+            --build-arg VUE_APP_VERSION=${{ steps.tag.outputs.version }} \
+            --build-arg APP_VERSION=${{ steps.tag.outputs.version }} \
+            .
+          echo "✅ Docker image built" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Image Built" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          docker images | grep ${{ env.SERVICE_NAME }} >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Create Trivy Reports Directory
+        run: mkdir -p trivy-reports
+
+      - name: Trivy Security Scan - Table Format
+        run: |
+          trivy image --severity HIGH,CRITICAL --format table --output trivy-reports/trivy-report-${{ env.SERVICE_NAME }}-table.txt ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} || true
+
+      - name: Trivy Security Scan - JSON Format
+        run: |
+          trivy image --severity HIGH,CRITICAL --format json --output trivy-reports/trivy-report-${{ env.SERVICE_NAME }}.json ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} || true
+
+      - name: Trivy Security Scan - SARIF Format
+        run: |
+          trivy image --severity HIGH,CRITICAL --format sarif --output trivy-reports/trivy-report-${{ env.SERVICE_NAME }}.sarif ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} || true
+
+      - name: Display Trivy Results
+        run: |
+          echo "### 🔒 Trivy Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat trivy-reports/trivy-report-${{ env.SERVICE_NAME }}-table.txt >> $GITHUB_STEP_SUMMARY || echo "No vulnerabilities report generated" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Trivy Scan Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-security-report-${{ env.SERVICE_NAME }}-${{ needs.sonarqube-analysis.outputs.image_tag }}
+          path: trivy-reports/
+          retention-days: 30
+
+      - name: Tag Docker Image for ECR
+        run: |
+          echo "🏷️ Tagging image for ECR..."
+          docker tag ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }}
+          docker tag ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.version }}
+          echo "✅ Tags prepared" >> $GITHUB_STEP_SUMMARY
+
+      - name: Configure AWS Credentials
+        run: |
+          echo "🔐 Logging into ECR..."
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+          echo "✅ ECR login successful"
+
+      - name: Push Image to ECR
+        run: |
+          echo "📤 Pushing image to ECR..."
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }}
+          #docker push ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.version }} || true
+          echo "✅ Pushed to ECR" >> $GITHUB_STEP_SUMMARY
+          echo "### 📤 Images Published to ECR" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** \`${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ needs.sonarqube-analysis.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ needs.sonarqube-analysis.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Clean Up Docker Images
+        if: always()
+        run: |
+          docker rmi ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} 2>/dev/null || true
+          docker rmi ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} 2>/dev/null || true
+          docker rmi ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.version }} 2>/dev/null || true
+          docker image prune -f
+          echo "✅ Cleanup completed"
+
+      - name: Verify Cleanup and Display Storage
+        if: always()
+        run: |
+          echo "### 🧹 Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          docker images | grep ${{ env.SERVICE_NAME }} || echo "No local images found - cleanup successful ✅" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          docker system df >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-config
+  namespace: argocd
+data:
+  git.user: "prasadmoru"
+  git.email: "prasadmoru@gmail.com"
+  
+  # Configure registries (if using ECR)
+  registries.conf: |
+    registries:
+    - name: ECR
+      prefix: 614520203046.dkr.ecr.us-east-1.amazonaws.com
+      api_url: https://614520203046.dkr.ecr.us-east-1.amazonaws.com
+      credentials: ext:/scripts/ecr-login.sh
+      default: true

@@ -1,0 +1,128 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-config
+  namespace: efk-logging
+data:
+  logstash.yml: |
+    http.host: "0.0.0.0"
+    path.config: /usr/share/logstash/pipeline
+    xpack.monitoring.enabled: false
+  
+  logstash.conf: |
+    input {
+      beats {
+        port => 5044
+      }
+    }
+
+    filter {
+      # Parse JSON logs
+      if [message] =~ /^\{.*\}$/ {
+        json {
+          source => "message"
+          skip_on_invalid_json => true
+        }
+      }
+
+      # Add custom fields
+      mutate {
+        add_field => {
+          "cluster_name" => "dev-eks-dev-cluster"
+          "environment" => "production"
+        }
+      }
+
+      # Remove problematic fields with dots/slashes
+      ruby {
+        code => '
+          kubernetes = event.get("kubernetes")
+          if kubernetes && kubernetes["labels"]
+            labels = kubernetes["labels"]
+            clean_labels = {}
+            labels.each do |key, value|
+              clean_key = key.gsub(/[\.\/]/, "_")
+              clean_labels[clean_key] = value.to_s
+            end
+            kubernetes["labels"] = clean_labels
+            event.set("kubernetes", kubernetes)
+          end
+        '
+      }
+    }
+
+    output {
+      elasticsearch {
+        hosts => ["elasticsearch.efk-logging.svc.cluster.local:9200"]
+        index => "kubernetes-%{+YYYY.MM.dd}"
+        manage_template => false
+      }
+      
+      # Debug output (optional - comment out in production)
+      # stdout { codec => rubydebug }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: efk-logging
+spec:
+  type: ClusterIP
+  ports:
+  - name: beats
+    port: 5044
+    targetPort: 5044
+  selector:
+    app: logstash
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: efk-logging
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+      - name: logstash
+        image: docker.elastic.co/logstash/logstash:7.17.10
+        ports:
+        - containerPort: 5044
+          name: beats
+        resources:
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+          requests:
+            memory: 1Gi
+            cpu: 500m
+        volumeMounts:
+        - name: config
+          mountPath: /usr/share/logstash/config
+        - name: pipeline
+          mountPath: /usr/share/logstash/pipeline
+        env:
+        - name: LS_JAVA_OPTS
+          value: "-Xmx1g -Xms1g"
+      volumes:
+      - name: config
+        configMap:
+          name: logstash-config
+          items:
+          - key: logstash.yml
+            path: logstash.yml
+      - name: pipeline
+        configMap:
+          name: logstash-config
+          items:
+          - key: logstash.conf
+            path: logstash.conf

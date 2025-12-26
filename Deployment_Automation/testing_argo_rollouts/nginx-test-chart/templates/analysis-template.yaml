@@ -1,0 +1,99 @@
+{{- if .Values.analysis.enabled }}
+---
+# Analysis 1: Request rate
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Chart.Name }}-request-rate
+  labels:
+    app: {{ .Chart.Name }}
+spec:
+  metrics:
+  - name: request-rate
+    interval: 30s
+    count: 3
+    successCondition: result >= 0
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus-server.monitoring.svc:80
+        query: |
+          scalar(
+            sum(rate(nginx_http_requests_total{app="nginx-test"}[1m]))
+          )
+
+---
+# Analysis 2: Error rate (THIS WILL CATCH THE BAD VERSION)
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Chart.Name }}-error-rate
+  labels:
+    app: {{ .Chart.Name }}
+spec:
+  metrics:
+  - name: error-rate
+    interval: 30s
+    count: 3
+    successCondition: result < 0.10  # Less than 10% errors
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus-server.monitoring.svc:80
+        query: |
+          scalar(
+            (
+              sum(rate(nginx_http_requests_total{app="nginx-test",status=~"5.."}[1m]))
+              /
+              sum(rate(nginx_http_requests_total{app="nginx-test"}[1m]))
+            )
+            or
+            vector(0)
+          )
+
+---
+# Analysis 3: Nginx up check
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Chart.Name }}-nginx-up
+  labels:
+    app: {{ .Chart.Name }}
+spec:
+  metrics:
+  - name: nginx-status
+    interval: 30s
+    count: 2
+    successCondition: result == 1
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus-server.monitoring.svc:80
+        query: |
+          scalar(
+            min(nginx_up{app="nginx-test"})
+          )
+
+---
+# Analysis 4: Connections
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Chart.Name }}-connections
+  labels:
+    app: {{ .Chart.Name }}
+spec:
+  metrics:
+  - name: active-connections
+    interval: 30s
+    count: 2
+    successCondition: result >= 0
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus-server.monitoring.svc:80
+        query: |
+          scalar(
+            avg(nginx_connections_active{app="nginx-test"})
+          )
+{{- end }}

@@ -1,0 +1,56 @@
+replicaCount: 3
+
+image:
+  repository: 614520203046.dkr.ecr.us-east-1.amazonaws.com/test-app
+  pullPolicy: Always
+  tag: "1.0.9"
+
+strategy:
+  type: canary
+  canary:
+    steps:
+    # Step 1: 20% canary
+    - setWeight: 20
+    # Step 2: Wait 1 minute
+    - pause:
+        duration: 1m
+    # Step 3: Run analysis with ERROR RATE CHECK
+    - analysis:
+        templates:
+        - templateName: nginx-test-request-rate
+        - templateName: nginx-test-error-rate
+        - templateName: nginx-test-nginx-up
+    
+    # Step 4: 50% canary
+    - setWeight: 50
+    # Step 5: Wait 2 minutes
+    - pause:
+        duration: 2m
+    # Step 6: Run analysis again
+    - analysis:
+        templates:
+        - templateName: nginx-test-error-rate
+        - templateName: nginx-test-connections
+    
+    # Step 7: 75% canary
+    - setWeight: 75
+    # Step 8: Wait 1 minute
+    - pause:
+        duration: 1m
+
+service:
+  type: ClusterIP
+  port: 80
+
+analysis:
+  enabled: true
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+revisionHistoryLimit: 3

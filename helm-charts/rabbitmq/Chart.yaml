@@ -1,0 +1,17 @@
+# ===================================================================
+# FILE: helm-charts/rabbitmq/Chart.yaml
+# ===================================================================
+apiVersion: v2
+name: rabbitmq
+description: RabbitMQ Message Queue for Store Application
+type: application
+version: 1.0.0
+appVersion: "3.10"
+keywords:
+  - messaging
+  - rabbitmq
+  - queue
+  - amqp
+maintainers:
+  - name: Bhavaniprasad
+    email: prasadmoru@gmail.com

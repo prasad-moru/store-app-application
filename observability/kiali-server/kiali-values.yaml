@@ -1,0 +1,161 @@
+# kiali-values.yaml - Customized for YOUR setup
+
+#############################################
+# Deployment Configuration
+#############################################
+deployment:
+  replicas: 1
+  
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+#############################################
+# Authentication Strategy
+#############################################
+auth:
+  strategy: anonymous  # For testing - use token for production
+
+#############################################
+# Server Configuration
+#############################################
+server:
+  port: 20001
+  web_root: "/"
+
+#############################################
+# External Services Configuration
+#############################################
+external_services:
+  
+  # Prometheus - REQUIRED
+  prometheus:
+    # CORRECTED: Using prometheus-server service on port 80
+    url: "http://prometheus-server.monitoring.svc.cluster.local:80"
+    
+    # Health check (prometheus-server doesn't have /-/healthy, will auto-detect)
+    # health_check_url: "http://prometheus-server.default.svc.cluster.local:80"
+  
+  # Jaeger - OPTIONAL but recommended
+  tracing:
+    enabled: true
+    
+    # CORRECTED: Using jaeger-query headless service
+    # Note: Headless services work, but you need to specify port explicitly
+    in_cluster_url: "http://jaeger-query.default.svc.cluster.local:16686"
+    
+    # Use REST API (not gRPC)
+    use_grpc: false
+    
+    # Query settings
+    namespace_selector: true
+    query_timeout: 5
+    
+    # Jaeger uses Zipkin format for trace collection
+    # The collector endpoint (for Istio) is:
+    # jaeger-collector.default.svc.cluster.local:9411
+  
+  # Grafana - DISABLED (not installed)
+  grafana:
+    enabled: false
+    # When you install Grafana later, update this:
+    # enabled: true
+    # in_cluster_url: "http://grafana.default.svc.cluster.local:80"
+  
+  # Istio configuration
+  istio:
+    component_status:
+      enabled: true
+      components:
+        - app_label: "istiod"
+          is_core: true
+          namespace: istio-system
+    
+    config_map_name: "istio"
+    istio_sidecar_injector_config_map_name: "istio-sidecar-injector"
+    istio_identity_domain: "svc.cluster.local"
+    
+    # Istio version endpoint
+    url_service_version: "http://istiod.istio-system.svc.cluster.local:15014/version"
+
+#############################################
+# Istio Namespace
+#############################################
+istio_namespace: "istio-system"
+
+#############################################
+# API Configuration
+#############################################
+api:
+  namespaces:
+    exclude:
+      - "kube-.*"
+      - "openshift.*"
+      - "ibm.*"
+
+#############################################
+# Kubernetes Configuration
+#############################################
+kubernetes_config:
+  cache_enabled: true
+  cache_duration: 300
+  
+  cache_namespaces:
+    - "istio-system"
+    - ".*"
+  
+  burst: 200
+  qps: 175
+
+#############################################
+# Login Token Settings
+#############################################
+login_token:
+  expiration_seconds: 86400
+
+#############################################
+# Service Configuration
+#############################################
+service:
+  type: ClusterIP
+  port: 20001
+
+#############################################
+# Ingress Configuration
+#############################################
+ingress:
+  enabled: false
+
+#############################################
+# Health Checks
+#############################################
+health_config:
+  rate:
+    - namespace: ".*"
+      kind: ".*"
+      name: ".*"
+      tolerance:
+        - code: "^5\\d\\d$"
+          failure: 10
+          protocol: "http"
+        - code: "^4\\d\\d$"
+          degraded: 10
+          protocol: "http"
+
+#############################################
+# Features
+#############################################
+features:
+  disabled_features: []
+  validations:
+    ignore: []
+
+#############################################
+# Kiali CR
+#############################################
+cr:
+  create: false

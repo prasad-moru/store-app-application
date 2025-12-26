@@ -1,0 +1,84 @@
+replicaCount: 1
+
+image:
+  repository: quay.io/argoprojlabs/argocd-image-updater
+  pullPolicy: Always
+  tag: ""
+
+updateStrategy:
+  type: Recreate
+
+config:
+  name: argocd-image-updater-config
+  applicationsAPIKind: "argocd"
+
+  argocd:
+    grpcWeb: false
+    serverAddress: "argo-cd-argocd-server.argocd.svc.cluster.local:80"
+    insecure: true
+    plaintext: true
+    token: ""  # Leave empty - we're using the secret
+    tokenSecretName: "argocd-image-updater-secret"
+
+  disableKubeEvents: false
+  gitCommitUser: "Prasad Moru"
+  gitCommitMail: "prasadmoru@gmail.com"
+  logLevel: "info"
+
+  registries:
+  - name: ECR
+    api_url: https://123456789.dkr.ecr.us-east-1.amazonaws.com
+    prefix: 123456789.dkr.ecr.us-east-1.amazonaws.com
+    ping: yes
+    insecure: no
+    credentials: ext:/scripts/ecr-login.sh
+    credsexpire: 10h
+
+  sshConfig:
+    name: argocd-image-updater-ssh-config
+    config: ""
+
+authScripts:
+  enabled: true  # Enable for ECR authentication
+  name: argocd-image-updater-authscripts
+  scripts:
+    ecr-login.sh: |
+      #!/bin/sh
+      aws ecr get-login-password --region ${AWS_REGION}
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::591234613960:role/Store-App-dev-eks-argocd-image-updater-role
+  name: ""
+
+extraEnv:
+  - name: HOME
+    value: /tmp
+  - name: AWS_REGION
+    value: us-east-1
+  - name: AWS_DEFAULT_REGION
+    value: us-east-1
+
+podSecurityContext: {}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+rbac:
+  enabled: true
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+metrics:
+  enabled: false

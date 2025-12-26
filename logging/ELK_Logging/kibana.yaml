@@ -1,0 +1,90 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: efk-logging
+  labels:
+    app: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      initContainers:
+      - name: wait-for-elasticsearch
+        image: curlimages/curl:8.1.0
+        command:
+        - sh
+        - -c
+        - |
+          until curl -s "http://elasticsearch.efk-logging.svc.cluster.local:9200/_cluster/health" | grep -q '"status":"green"\|"status":"yellow"'; do
+            echo "Waiting for Elasticsearch..."
+            sleep 5
+          done
+          echo "Elasticsearch is ready!"
+      containers:
+      - name: kibana
+        image: docker.elastic.co/kibana/kibana:7.17.10
+        ports:
+        - containerPort: 5601
+          name: http
+        env:
+        - name: ELASTICSEARCH_HOSTS
+          value: "http://elasticsearch.efk-logging.svc.cluster.local:9200"
+        - name: SERVER_NAME
+          value: "kibana.devopsproduction.com"
+        - name: SERVER_HOST
+          value: "0.0.0.0"
+        - name: SERVER_BASEPATH
+          value: ""
+        - name: SERVER_REWRITEBASEPATH
+          value: "false"
+        - name: ELASTICSEARCH_REQUESTTIMEOUT
+          value: "90000"
+        - name: KIBANA_DEFAULTAPPID
+          value: "discover"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /api/status
+            port: 5601
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+        livenessProbe:
+          httpGet:
+            path: /api/status
+            port: 5601
+          initialDelaySeconds: 120
+          periodSeconds: 20
+          timeoutSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: efk-logging
+  labels:
+    app: kibana
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5601
+    targetPort: 5601
+    protocol: TCP
+    name: http
+  selector:
+    app: kibana

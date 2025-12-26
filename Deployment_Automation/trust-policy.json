@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::614520203046:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/404B23692E32883C740515FEA414D237"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/404B23692E32883C740515FEA414D237:sub": "system:serviceaccount:argocd:argocd-image-updater",
+          "oidc.eks.us-east-1.amazonaws.com/id/404B23692E32883C740515FEA414D237:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

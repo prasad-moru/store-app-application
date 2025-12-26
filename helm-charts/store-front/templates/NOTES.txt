@@ -1,0 +1,68 @@
+🚀 Store Front has been deployed!
+
+Chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+📊 Deployment Information:
+- Strategy: {{ .Values.strategy.type | upper }}
+- Image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+- Replicas: {{ .Values.replicaCount }}
+
+{{- if .Values.autoscaling.enabled }}
+🔄 Auto-scaling is ENABLED:
+- Min Replicas: {{ .Values.autoscaling.minReplicas }}
+- Max Replicas: {{ .Values.autoscaling.maxReplicas }}
+- CPU Target: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}%
+- Memory Target: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}%
+{{- end }}
+
+{{- if .Values.istio.enabled }}
+🌐 Istio Service Mesh: ENABLED
+{{- if .Values.istio.gateway.enabled }}
+- Gateway: {{ .Values.istio.gateway.name }}
+{{- end }}
+- VirtualService: {{ include "store-front.fullname" . }}
+{{- end }}
+
+{{- if .Values.datadog.enabled }}
+📈 Datadog Monitoring: ENABLED
+- Service: {{ .Values.datadog.service }}
+- Environment: {{ .Values.datadog.env }}
+{{- end }}
+
+🔵🟢 Blue-Green Deployment:
+- Active Service: {{ include "store-front.fullname" . }}
+- Preview Service: {{ include "store-front.fullname" . }}-preview
+- Auto-Promotion: {{ .Values.strategy.blueGreen.autoPromotionEnabled }}
+{{- if .Values.strategy.blueGreen.autoPromotionSeconds }}
+- Auto-Promotion Delay: {{ .Values.strategy.blueGreen.autoPromotionSeconds }}s
+{{- end }}
+
+🔍 Get the rollout status:
+  kubectl get rollout {{ include "store-front.fullname" . }} -n {{ .Release.Namespace }}
+
+📋 Watch rollout progress:
+  kubectl argo rollouts get rollout {{ include "store-front.fullname" . }} -n {{ .Release.Namespace }} --watch
+
+✅ Promote blue-green (manual):
+  kubectl argo rollouts promote {{ include "store-front.fullname" . }} -n {{ .Release.Namespace }}
+
+⏪ Abort rollout:
+  kubectl argo rollouts abort {{ include "store-front.fullname" . }} -n {{ .Release.Namespace }}
+
+📊 View in Argo Rollouts Dashboard:
+  kubectl argo rollouts dashboard
+
+{{- if .Values.istio.gateway.enabled }}
+🌍 Access the application:
+  Get Istio Ingress Gateway external IP:
+  kubectl get svc istio-ingressgateway -n istio-system
+  
+  Then visit: http://<EXTERNAL-IP>/
+{{- else }}
+🎯 Access service internally:
+  kubectl port-forward svc/{{ include "store-front.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  
+  Then visit: http://localhost:{{ .Values.service.port }}/
+{{- end }}

@@ -1,0 +1,165 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "ai-service.fullname" . }}
+  labels:
+    {{- include "ai-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "ai-service.selectorLabels" . | nindent 6 }}
+  strategy:
+    {{- if eq .Values.strategy.type "canary" }}
+    canary:
+      canaryService: {{ include "ai-service.fullname" . }}-canary
+      stableService: {{ include "ai-service.fullname" . }}
+      {{- if .Values.strategy.canary.dynamicStableScale }}
+      dynamicStableScale: {{ .Values.strategy.canary.dynamicStableScale }}
+      {{- end }}
+      
+      {{- if .Values.strategy.canary.maxSurge }}
+      maxSurge: {{ .Values.strategy.canary.maxSurge | quote }}
+      {{- end }}
+      
+      {{- if .Values.strategy.canary.maxUnavailable }}
+      maxUnavailable: {{ .Values.strategy.canary.maxUnavailable }}
+      {{- end }}
+      {{- if .Values.istio.enabled }}
+      trafficRouting:
+        istio:
+          virtualService:
+            name: {{ include "ai-service.fullname" . }}
+            routes:
+              - primary
+      {{- end }}
+      steps:
+        {{- toYaml .Values.strategy.canary.steps | nindent 8 }}
+    {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-service.selectorLabels" . | nindent 8 }}
+        {{- include "ai-service.datadogLabels" . | nindent 8 }}
+        version: {{ .Values.image.tag | quote }}
+      annotations:
+        {{- include "ai-service.datadogAnnotations" . | nindent 8 }}
+        {{- if .Values.istio.enabled }}
+        sidecar.istio.io/inject: "true"
+        {{- end }}
+        {{- if .Values.vault.enabled }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role | quote }}
+        {{- range $name, $secret := .Values.vault.secrets }}
+        vault.hashicorp.com/agent-inject-secret-{{ $name }}.env: {{ $secret.path | quote }}
+        vault.hashicorp.com/agent-inject-template-{{ $name }}.env: |
+{{- $secret.template | nindent 10 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ai-service.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- if .Values.vault.enabled }}
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            # Wait for secrets file
+            echo "Waiting for Vault secrets..."
+            for i in $(seq 1 60); do 
+              if [ -s /vault/secrets/openai.env ]; then 
+                echo "Secrets file found"
+                break
+              fi
+              sleep 2
+            done
+            
+            # Extract values with more precise matching
+            export OPENAI_API_KEY=$(grep '^export OPENAI_API_KEY=' /vault/secrets/openai.env | sed 's/^export OPENAI_API_KEY=//' | tr -d '"' | tr -d '\n' | tr -d '\r' | sed 's/\\n$//')
+            export OPENAI_ORG_ID=$(grep '^export OPENAI_ORG_ID=' /vault/secrets/openai.env | sed 's/^export OPENAI_ORG_ID=//' | tr -d '"' | tr -d '\n' | tr -d '\r')
+            export AZURE_OPENAI_API_KEY=$(grep '^export AZURE_OPENAI_API_KEY=' /vault/secrets/openai.env | sed 's/^export AZURE_OPENAI_API_KEY=//' | tr -d '"' | tr -d '\n' | tr -d '\r')
+            
+            # Verify
+            if [ -z "$OPENAI_API_KEY" ]; then
+              echo "ERROR: OPENAI_API_KEY not loaded"
+              cat /vault/secrets/openai.env
+              exit 1
+            fi
+            
+            echo "Secrets extracted successfully"
+            echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"
+            echo "OPENAI_API_KEY first 20 chars: ${OPENAI_API_KEY:0:20}..."
+            echo "OPENAI_API_KEY last 10 chars: ...${OPENAI_API_KEY: -10}"
+            echo "OPENAI_ORG_ID: $OPENAI_ORG_ID"
+            
+            exec ddtrace-run uvicorn main:app --host 0.0.0.0 --port 5001
+        {{- end }}  
+        ports:
+        - name: http
+          containerPort: {{ .Values.service.targetPort }}
+          protocol: TCP
+        env:
+        {{- if .Values.datadog.enabled }}
+        - name: DD_AGENT_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: DD_SERVICE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tags.datadoghq.com/service']
+        - name: DD_ENV
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tags.datadoghq.com/env']
+        - name: DD_VERSION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tags.datadoghq.com/version']
+        - name: DD_LOGS_INJECTION
+          value: "true"
+        - name: DD_TRACE_SAMPLE_RATE
+          value: "1"
+        - name: DD_PROFILING_ENABLED
+          value: {{ .Values.datadog.profiling.enabled | quote }}
+        {{- end }}
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.probes.startup }}
+        startupProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.probes.readiness }}
+        readinessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.probes.liveness }}
+        livenessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

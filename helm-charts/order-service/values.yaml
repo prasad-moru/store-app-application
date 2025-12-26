@@ -1,0 +1,252 @@
+# helm-charts/order-service/values.yaml
+replicaCount: 1
+
+image:
+  repository: 591234613960.dkr.ecr.us-east-1.amazonaws.com/order-service
+  tag: "1.0.1-873b30a"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "order-service"
+
+service:
+  name: order-service
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+
+# Argo Rollouts Strategy - OPTIMIZED
+strategy:
+  type: canary
+  canary:
+    dynamicStableScale: true    # Enable proportional scaling
+    maxSurge: "25%"              # Allow 25% extra pods during rollout
+    maxUnavailable: 0            # Keep all pods available
+    
+    steps:
+      - setWeight: 20
+      - setCanaryScale:
+          weight: 20
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      
+      - setWeight: 40
+      - setCanaryScale:
+          weight: 40
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      
+      - setWeight: 60
+      - setCanaryScale:
+          weight: 60
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      
+      - setWeight: 80
+      - setCanaryScale:
+          weight: 80
+      - pause:
+          duration: 3m
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      
+      - setWeight: 100
+    
+    trafficRouting:
+      istio:
+        virtualService:
+          name: order-service
+          routes:
+            - primary
+    
+    analysisInterval: 1m
+    analysisSuccessCount: 2
+    analysisFailureLimit: 3
+
+# Add this section to your values.yaml (around line 229, replace the empty podAnnotations)
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "8200,8201"
+  proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+
+# Istio Configuration
+istio:
+  enabled: true
+  gateway:
+    enabled: false
+  virtualService:
+    enabled: true
+    hosts:
+      - order-service
+  destinationRule:
+    enabled: true
+
+# HPA Configuration - OPTIMIZED
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6            # Increased for headroom
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 3
+          periodSeconds: 30
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 20
+    failureThreshold: 5
+    periodSeconds: 10
+  readiness:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 3
+    failureThreshold: 3
+    periodSeconds: 5
+  liveness:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 3
+    failureThreshold: 5
+    periodSeconds: 3
+
+# Environment variables
+env:
+  - name: ORDER_QUEUE_HOSTNAME
+    value: "rabbitmq.default.svc.cluster.local"
+  - name: ORDER_QUEUE_PORT
+    value: "5672"
+  - name: ORDER_QUEUE_NAME
+    value: "orders"
+  - name: FASTIFY_ADDRESS
+    value: "0.0.0.0"
+  - name: DD_TRACE_ENABLED
+    value: "false"  
+
+# Init Container for RabbitMQ readiness
+initContainers:
+  - name: wait-for-rabbitmq
+    image: busybox:1.36
+    command: 
+      - 'sh'
+      - '-c'
+      - 'until nc -zv rabbitmq.default.svc.cluster.local 5672; do echo waiting for rabbitmq; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 1m
+        memory: 50Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+# Vault Configuration
+vault:
+  enabled: true
+  role: "order-service"
+  secrets:
+    rabbitmq:
+      path: "kv/data/order-service"
+      # This template will be rendered by Vault, not Helm
+      # The |- preserves the template syntax for Vault to process
+      template: |-
+        {{- with secret "kv/data/order-service" -}}
+        export ORDER_QUEUE_USERNAME="{{ .Data.data.rabbitmq_username }}"
+        export ORDER_QUEUE_PASSWORD="{{ .Data.data.rabbitmq_password }}"
+        {{- end -}}
+
+# Datadog Configuration
+datadog:
+  enabled: false  
+  env: production
+  service: order-service
+  # version: "1.0.0-e3a80fd"
+  logs:
+    enabled: false
+  apm:
+    enabled: false
+    language: nodejs
+  profiling:
+    enabled: false
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+
+podLabels: {}
+
+# Analysis Template Configuration - OPTIMIZED
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    secretNamespace: application
+    apiUrl: https://api.us5.datadoghq.com
+    metrics:
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:order-service,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"
+        failureLimit: 3
+        interval: 1m
+        count: 8                  # Increased for 3m pause
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:ordeer-service,env:production}"
+        successCondition: "default(result, 0) < 1000"
+        failureLimit: 3
+        interval: 1m
+        count: 8                  # Increased for 3m pause

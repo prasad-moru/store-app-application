@@ -1,0 +1,101 @@
+# loki-values.yaml - PROPERLY DISABLED OPTIONAL COMPONENTS
+
+deploymentMode: SingleBinary
+
+loki:
+  commonConfig:
+    replication_factor: 1
+  auth_enabled: false
+  storage:
+    type: filesystem
+  limits_config:
+    retention_period: 72h
+    ingestion_rate_mb: 4
+    ingestion_burst_size_mb: 6
+
+promtail:
+  enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: gp2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# DISABLE CHUNKS CACHE (multiple ways for compatibility)
+chunksCache:
+  enabled: false
+  replicas: 0
+
+memcached:
+  enabled: false
+
+memcachedChunks:
+  enabled: false
+
+# DISABLE RESULTS CACHE
+resultsCache:
+  enabled: false
+
+memcachedIndexQueries:
+  enabled: false
+
+memcachedIndexWrites:
+  enabled: false
+
+# DISABLE GATEWAY
+gateway:
+  enabled: false
+
+# DISABLE MONITORING COMPONENTS
+monitoring:
+  enabled: false
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false
+  lokiCanary:
+    enabled: false
+
+# Also try this (different chart versions use different keys)
+loki-canary:
+  enabled: false
+
+# DISABLE SCALABLE COMPONENTS
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+# DISABLE INDEX GATEWAY
+indexGateway:
+  enabled: false
+
+# DISABLE COMPACTOR (if in simple mode)
+compactor:
+  enabled: false
+
+# DISABLE RULER
+ruler:
+  enabled: false
+
+# DISABLE QUERY SCHEDULER
+queryScheduler:
+  enabled: false

@@ -1,0 +1,32 @@
+# infrastructure/argocd/applications/app-of-apps.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: store-app-of-apps
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: store-app-of-apps
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/<YOUR_ORG>/<YOUR_REPO>.git
+    targetRevision: main
+    path: infrastructure/argocd/applications
+    directory:
+      recurse: false
+      include: '*-app.yaml'
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true

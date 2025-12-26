@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-service
+  namespace: application
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ai-service-vault-test
+  namespace: application
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "ai-service"
+    vault.hashicorp.com/agent-inject-secret-openai.env: "kv/data/ai-service"
+    vault.hashicorp.com/agent-inject-template-openai.env: |
+      #!/bin/sh
+      {{- with secret "kv/data/ai-service" -}}
+      export OPENAI_API_KEY="{{ .Data.data.openai_api_key }}"
+      export OPENAI_ORG_ID="{{ .Data.data.openai_org_id }}"
+      export AZURE_OPENAI_API_KEY="{{ .Data.data.azure_openai_api_key }}"
+      {{- end -}}
+spec:
+  serviceAccountName: ai-service
+  containers:
+  - name: app
+    image: nginx:alpine
+    command: ['sh', '-c', 'sleep 3600']

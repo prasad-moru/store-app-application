@@ -1,0 +1,25 @@
+{{- if and .Values.istio.enabled .Values.istio.virtualService.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "order-service.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "order-service.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ include "order-service.fullname" . }}
+  http:
+  - name: primary
+    route:
+    - destination:
+        host: {{ include "order-service.fullname" . }}
+        port:
+          number: {{ .Values.service.port }}
+      weight: 100
+    - destination:
+        host: {{ include "order-service.fullname" . }}-canary
+        port:
+          number: {{ .Values.service.port }}
+      weight: 0
+{{- end }}

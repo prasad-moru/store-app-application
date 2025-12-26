@@ -1,0 +1,82 @@
+serverFiles:
+  alerting_rules.yml:
+    groups:
+    - name: immediate-test-alerts
+      interval: 15s
+      rules:
+      # This will fire immediately for testing
+      - alert: TEST_PIPELINE_CHECK
+        expr: vector(1)
+        for: 10s
+        labels:
+          severity: critical
+          test: "true"
+        annotations:
+          summary: "🔥 CRITICAL TEST - Check Slack Now!"
+          description: "If you see this in Slack, the entire pipeline is working!"
+    
+    - name: kube-pod-resources-fixed
+      interval: 30s
+      rules:
+      - alert: PodCPUOver50PercentOfRequest
+        expr: |
+          sum by (namespace, pod) (
+            rate(container_cpu_usage_seconds_total{namespace="monitoring",image!=""}[5m])
+          )
+          /
+          sum by (namespace, pod) (
+            kube_pod_container_resource_requests{namespace="monitoring",resource="cpu",unit="core"}
+          ) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+          team: dev
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} CPU > 50% of request"
+          description: "CPU usage is {{ $value | humanizePercentage }} of requested CPU"
+      
+      - alert: PodMemoryOver50PercentOfRequest
+        expr: |
+          sum by (namespace, pod) (
+            container_memory_usage_bytes{namespace="monitoring",image!=""}
+          )
+          /
+          sum by (namespace, pod) (
+            kube_pod_container_resource_requests{namespace="monitoring",resource="memory",unit="byte"}
+          ) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+          team: dev
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} memory > 50% of request"
+          description: "Memory usage is {{ $value | humanizePercentage }} of requested memory"
+    
+    - name: stress-test-specific
+      interval: 30s
+      rules:
+      # This should definitely fire for stress-test pod (500m CPU / 100m request = 500%)
+      - alert: StressTestCPUHigh
+        expr: |
+          rate(container_cpu_usage_seconds_total{pod="stress-test",namespace="monitoring"}[2m])
+          /
+          kube_pod_container_resource_requests{pod="stress-test",namespace="monitoring",resource="cpu",unit="core"} > 2
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stress test pod CPU is {{ $value | humanizePercentage }} of request"
+          description: "Pod stress-test is using way more CPU than requested"
+      
+      # This should fire for memory-stress pod
+      - alert: StressTestMemoryHigh
+        expr: |
+          container_memory_usage_bytes{pod="memory-stress",namespace="monitoring"}
+          /
+          kube_pod_container_resource_requests{pod="memory-stress",namespace="monitoring",resource="memory",unit="byte"} > 1.5
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory stress pod is using {{ $value | humanizePercentage }} of request"
+          description: "Pod memory-stress is using more memory than requested"
